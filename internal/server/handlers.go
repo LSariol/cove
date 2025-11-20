@@ -177,7 +177,5 @@ func DeleteBootstrapMarker() error {
 		}
 	}
 
-	fmt.Println("bootstrap cleared")
-
 	return nil
 }

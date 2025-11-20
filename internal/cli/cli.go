@@ -50,24 +50,25 @@ func (c *CLI) parseCLI(ctx context.Context, args []string) {
 	case "get", "g":
 
 		if len(args) != 2 {
-			yellowLog("Get requires 2 total arguments.")
-			yellowLog("get <secret>")
+			warningLog("Get requires 1 additional argument.")
+			infoLog("get <secret>")
 			return
 		}
 
 		res, err := c.DB.GetSecret(ctx, args[1])
 		if err != nil {
-			redLog(fmt.Sprintf("error getting %q: %w", args[1], err))
+			errorLog(fmt.Sprintf("error getting %q: %v", args[1], err))
 			return
 		}
 
-		greenLog(fmt.Sprintf("%s : %s\n", res.Key, res.Value))
+		successLog(fmt.Sprintf("%s : %s\n", res.Key, res.Value))
+		return
 
-	case "add", "a":
+	case "create", "c":
 
 		if len(args) != 3 {
-			yellowLog("add requires 3 total arguments.")
-			yellowLog("add <secretName> <value>")
+			warningLog("Create requires 2 additional arguments.")
+			infoLog("create <secretName> <value>")
 			return
 		}
 
@@ -78,31 +79,52 @@ func (c *CLI) parseCLI(ctx context.Context, args []string) {
 
 		secret, err := c.DB.CreateSecret(ctx, newSecret)
 		if err != nil {
-			redLog(err.Error())
+			errorLog(err.Error())
+			return
 		}
 
-		greenLog(fmt.Sprintf("%s has been created at %q\n", secret.Key, secret.DateAdded))
+		successLog(fmt.Sprintf("%s has been created at %q\n", secret.Key, secret.DateAdded))
+		return
 
-	case "remove", "r", "delete", "d":
+	case "delete", "d":
 
 		if len(args) != 2 {
-			yellowLog("Get requires 2 total arguments.")
-			yellowLog("remove <secret>")
+			warningLog("Delete requires 1 additional argument.")
+			infoLog("delete <secretName>")
+			return
+		}
+
+		secretName := args[1]
+		warningLog(fmt.Sprintf("Are you sure you want to delete %q (y/N)", secretName))
+		scanner := bufio.NewScanner(os.Stdin)
+		fmt.Print("Cove CLI> ")
+
+		if !scanner.Scan() {
+			warningLog("Delete Cancelled")
+			return
+		}
+
+		response := strings.ToLower(strings.TrimSpace(scanner.Text()))
+
+		if response != "y" && response != "yes" {
+			infoLog("Delete cancelled.")
 			return
 		}
 
 		err := c.DB.DeleteSecret(ctx, args[1])
 		if err != nil {
-			redLog(err.Error())
+			errorLog(err.Error())
+			return
 		}
 
-		greenLog("Secret has been removed\n")
+		successLog("Secret has been removed\n")
+		return
 
 	case "update", "u":
 
 		if len(args) != 3 {
-			yellowLog("Update requires 3 total arguments.")
-			yellowLog("update <secretName> <newValue>")
+			warningLog("Update requires 2 additional arguments.")
+			infoLog("update <secretName> <newValue>")
 			return
 		}
 
@@ -113,52 +135,157 @@ func (c *CLI) parseCLI(ctx context.Context, args []string) {
 
 		err := c.DB.UpdateSecret(ctx, newSecret)
 		if err != nil {
-			redLog(err.Error())
+			errorLog(err.Error())
+			return
 		}
 
-		greenLog("Secret has been updated.\n")
+		successLog("Secret has been updated.\n")
+		return
 
 	case "list", "l":
 
-		if len(args) != 1 {
-			yellowLog("List requires 1 argument.")
-			yellowLog("list")
+		switch len(args) {
+
+		case 1:
+			c.displayPublicVault(ctx, "", "all")
+		case 2:
+			c.displayPublicVault(ctx, args[1], "prefix")
+		case 3:
+			mode := strings.ToLower(args[2])
+			if mode == "fuzzy" || mode == "f" {
+				c.displayPublicVault(ctx, args[1], "fuzzy")
+			} else {
+				warningLog("List third argument must be 'fuzzy' or 'f'.")
+				infoLog("list [term] [fuzzy|f]")
+			}
+		default:
+			warningLog("List takes at most 2 additional arguments.")
+			infoLog("list [term] [fuzzy|f]")
 			return
 		}
-		c.displayPublicVault(ctx)
 
 	case "bootstrap", "b":
 
 		if len(args) != 2 {
-			yellowLog("bootstrap requires 2 arguments.")
-			yellowLog("bootstrap <clear/lock>")
+			warningLog("Bootstrap requires 1 additional argument.")
+			infoLog("bootstrap <clear/lock>")
 			return
 		}
 
-		if args[1] == strings.ToLower("clear") {
+		mode := strings.ToLower(args[1])
+
+		switch mode {
+		case "clear":
 			if err := server.DeleteBootstrapMarker(); err != nil {
-				redLog(fmt.Sprintf("Error clearing marker: %w", err))
+				errorLog(err.Error())
+				return
 			}
+
+			successLog("Bootstrap marker cleared.\n")
+			return
+
+		case "lock":
+			if err := server.CreateBootstrapMarker(); err != nil {
+				errorLog(err.Error())
+				return
+			}
+
+			successLog("Bootstrap marker created.\n")
+			return
+
+		default:
+			warningLog("Invalid bootstrap argument; expected 'clear' or 'lock'")
+			infoLog("bootstrap <clear|lock>")
+			return
 		}
 
-		if args[1] == strings.ToLower("lock") {
-			if err := server.CreateBootstrapMarker(); err != nil {
-				redLog(fmt.Sprintf("Error clearing marker: %w", err))
-			}
-		}
+	case "help", "h":
+
+		s := `Available Commands:
+
+  exit, quit
+      Shuts down the program.
+
+  get, g <secret>
+      Displays the value of the specified secret.
+
+  create, c <secret> <value>
+      Creates a new secret and value to the vault.
+
+  delete, d <secret>
+      Removes the specified secret from the vault.
+
+  update, u <secret> <new_value>
+      Updates an existing secret in the vault.
+
+  list, l
+      Lists all secrets in the public vault.
+
+  list, l <term>
+      Lists secrets whose keys start with <term>.
+
+  list, l <term> fuzzy
+  list, l <term> f
+      Lists secrets containing <term> (substring match).
+
+  bootstrap, b <clear|lock>
+      Enters or exits bootstrapping mode. This allows Lighthouse to obtain a
+      one-time-use password without authenticating first.
+
+  help, h
+      Displays this help information.`
+
+		infoLog("\n" + s)
+		return
+
+	default:
+		warningLog(fmt.Sprintf("Unknown command %q", args[0]))
+		infoLog("Type 'help' to see available commands.")
+		return
 	}
+
 }
 
-func (c *CLI) displayPublicVault(ctx context.Context) {
-	publicVault, err := c.DB.GetAllKeys(ctx) // should return []Secret
+func (c *CLI) displayPublicVault(ctx context.Context, term string, mode string) {
+
+	publicVault, err := c.DB.GetAllKeys(ctx)
+
 	if err != nil {
-		redLog(fmt.Sprintf("GetAllKeys: %v", err))
+		errorLog(fmt.Sprintf("GetAllKeys: %v", err))
+		return
+	}
+
+	term = strings.ToLower(term)
+
+	filteredPublicVault := publicVault[:0]
+
+	for _, entry := range publicVault {
+		keyLower := strings.ToLower(entry.Key)
+
+		switch mode {
+		case "all", "":
+			filteredPublicVault = append(filteredPublicVault, entry)
+		case "prefix":
+			if strings.HasPrefix(keyLower, term) {
+				filteredPublicVault = append(filteredPublicVault, entry)
+			}
+		case "fuzzy":
+			if strings.Contains(keyLower, term) {
+				filteredPublicVault = append(filteredPublicVault, entry)
+			}
+		default:
+			filteredPublicVault = append(filteredPublicVault, entry)
+		}
+	}
+
+	if len(filteredPublicVault) == 0 {
+		infoLog("No secrets matched your query.")
 		return
 	}
 
 	const (
 		keyW    = 30
-		dateW   = 19 // "2006-01-02 15:04:05" = 23 chars
+		dateW   = 19
 		versW   = 7
 		pulledW = 12
 		timeFmt = "2006-01-02 15:04:05"
@@ -188,10 +315,10 @@ func (c *CLI) displayPublicVault(ctx context.Context) {
 			strings.Repeat("-", pulledW),
 	)
 
-	greenLog(header)
-	greenLog(divider)
+	plainLog(header)
+	plainLog(divider)
 
-	for _, entry := range publicVault {
+	for _, entry := range filteredPublicVault {
 		row := fmt.Sprintf(
 			"%-*s | %-*s | %-*s | %-*d | %-*d\n",
 			keyW, entry.Key,
@@ -200,18 +327,30 @@ func (c *CLI) displayPublicVault(ctx context.Context) {
 			versW, entry.Version,
 			pulledW, entry.TimesPulled,
 		)
-		greenLog(row)
+		plainLog(row)
 	}
 }
 
-func greenLog(s string) {
+func plainLog(s string) {
+	fmt.Print(s)
+}
+
+// Green
+func successLog(s string) {
 	fmt.Print("\033[32mCove CLI> " + s + "\033[0m")
 }
 
-func yellowLog(s string) {
+// Yellow
+func warningLog(s string) {
 	fmt.Println("\033[33mCove CLI> " + s + "\033[0m")
 }
 
-func redLog(s string) {
+// Red
+func errorLog(s string) {
 	fmt.Println("\033[31mCove CLI> " + s + "\033[0m")
+}
+
+// Cyan
+func infoLog(s string) {
+	fmt.Println("\033[36mCove CLI> " + s + "\033[0m")
 }
