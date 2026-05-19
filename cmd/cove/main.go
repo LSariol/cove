@@ -2,6 +2,7 @@ package main
 
 import (
 	"context"
+	"fmt"
 	"log"
 	"os"
 	"os/signal"
@@ -28,7 +29,10 @@ func main() {
 
 	db := database.NewDB()
 
-	db.Connect(ctx)
+	err := db.Connect(ctx)
+	if err != nil {
+		panic(fmt.Sprintf("Connect DB: %q", err))
+	}
 
 	srv := server.NewServer(db)
 	cli := cli.NewCLI(db)

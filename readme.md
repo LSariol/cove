@@ -1,32 +1,359 @@
-#  Cove
+# Cove
 
-**Cove** is a lightweight, local-first secret management API written in Go. It allows your personal and home-lab projects to store, retrieve, update, and delete secrets securely through a simple RESTful interface.
+**Cove** is a lightweight, self-hosted secret management server written in Go. It exposes a RESTful API for storing, retrieving, updating, and deleting secrets, backed by a PostgreSQL database with AES-256-GCM encryption at rest. It is designed for personal and home-lab projects that need a simple, private alternative to cloud-based secret managers.
 
-##  Features
+Secrets are encrypted before being written to the database. Keys are never exposed through the list endpoint — only metadata (version, timestamps, pull count) is returned. Every read, write, update, and delete is written to an append-only event log.
 
-- Secure secret storage with encryption at rest
-- REST API for managing secrets
-- Client authentication via bearer token
-- JSON file-based vault for quick and minimal setup (no external DB needed)
-- Designed for internal/private use
+---
 
-## [CoveClient](https://github.com/LSariol/CoveClient)
-CoveClient is a lightweight Go module that simplifies communication with the Cove secret management API.
-It provides a clean and reusable interface for reaching Cove’s endpoints, making it easy for projects like Lighthouse and others to securely access and manage secrets without handling raw HTTP logic.
+## Features
 
+- AES-256-GCM encryption at rest (keys derived via SHA-256)
+- PostgreSQL-backed storage with a full event log
+- Bearer token authentication on all secret endpoints
+- One-time bootstrap endpoint for automated client setup
+- Interactive CLI for direct vault management
+- Docker-ready with a minimal Alpine image
 
-## Setup Instructions
-Setup should be fairly straight forward. **However a much more detailed guide will be uploaded eventually.**
-1) Clone the repo to your machine
-2) Rename .env.exmaple to .env
-3) Generate and add in a value for COVE_CLIENT_SECRET
-4) Generate and add in a AES 256 GCM encryption key for VAULT_ENCRYPTION_KEY
-5) Rename vault.json.exmaple to vault.json
-6) Run 'go build main.go'
-7) Run the executable
+---
 
+## Architecture
 
+```
+cmd/cove/main.go          Entry point — loads config, connects DB, starts server and CLI
+internal/config/          Environment loading and secret auto-generation
+internal/server/          HTTP server, routing, middleware, and handlers
+internal/database/        PostgreSQL connection pool and CRUD + event log
+internal/encryption/      AES-256-GCM encrypt/decrypt and secret generation
+internal/cli/             Interactive CLI for managing secrets directly
+```
 
+Cove runs two things concurrently: the HTTP server (default port `2110` for dev, `2100` for prod) and an interactive CLI on stdin. The CLI connects to the same database as the API, so changes made via CLI are immediately visible through the API and vice versa.
 
-## To Do 
-- Add security to cli
+---
+
+## Prerequisites
+
+- Go 1.25+
+- PostgreSQL instance (local or remote)
+- Docker & Docker Compose (for containerized deployment)
+
+---
+
+## Database Setup
+
+Cove expects a `cove` schema with two tables. Run the following SQL against your PostgreSQL instance before starting the server:
+
+```sql
+CREATE SCHEMA IF NOT EXISTS cove;
+
+CREATE TABLE IF NOT EXISTS cove.secrets (
+    id            UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    secret_key    TEXT NOT NULL UNIQUE,
+    secret_value  TEXT NOT NULL,
+    version       INT NOT NULL DEFAULT 1,
+    times_pulled  INT NOT NULL DEFAULT 0,
+    date_added    TIMESTAMPTZ NOT NULL DEFAULT now(),
+    last_modified TIMESTAMPTZ NOT NULL DEFAULT now()
+);
+
+CREATE TABLE IF NOT EXISTS cove.event_log (
+    id            BIGSERIAL PRIMARY KEY,
+    secret_id     UUID,
+    secret_key    TEXT,
+    version       INT,
+    modification  TEXT,
+    source        TEXT,
+    old_value     TEXT,
+    new_value     TEXT,
+    created_at    TIMESTAMPTZ NOT NULL DEFAULT now()
+);
+```
+
+---
+
+## Local Setup (Development)
+
+1. Clone the repository:
+   ```bash
+   git clone https://github.com/LSariol/Cove.git
+   cd Cove
+   ```
+
+2. Copy the example environment file:
+   ```bash
+   cp .env.exmaple .env
+   ```
+
+3. Edit `.env` and fill in your database URL and optionally your secrets. If `COVE_CLIENT_SECRET` or `VAULT_ENCRYPTION_KEY` are left empty, Cove will generate and persist them automatically on first start.
+
+   ```env
+   COVE_DATABASE_URL=postgres://user:password@localhost:5432/yourdb
+
+   # Leave empty to auto-generate on first start, or provide your own values:
+   COVE_CLIENT_SECRET=
+   VAULT_ENCRYPTION_KEY=
+
+   APP_ENV=DEV
+   APP_PORT=2110
+   APP_ENV_PATH=.env
+   APP_MARKER_PATH=./markers
+   ```
+
+4. Build and run:
+   ```bash
+   go build -o cove ./cmd/cove
+   ./cove
+   ```
+
+   The server starts on the port defined by `APP_PORT`. The interactive CLI prompt (`Cove CLI>`) appears immediately in the same terminal.
+
+---
+
+## Environment Variables
+
+| Variable             | Required | Description |
+|----------------------|----------|-------------|
+| `COVE_DATABASE_URL`  | Yes      | PostgreSQL connection string (`postgres://user:pass@host:port/db`) |
+| `COVE_CLIENT_SECRET` | No       | Bearer token clients must send. Auto-generated and persisted if empty. |
+| `VAULT_ENCRYPTION_KEY` | No     | Key used to derive the AES-256 encryption key. Auto-generated and persisted if empty. |
+| `APP_ENV`            | No       | Runtime environment label (`DEV` or `PROD`) |
+| `APP_PORT`           | Yes      | Port the HTTP server listens on |
+| `APP_ENV_PATH`       | Yes      | Absolute or relative path to the `.env` file (used for auto-generated secret persistence) |
+| `APP_MARKER_PATH`    | No       | Directory for bootstrap marker files. Defaults to `/app/vault/markers`. |
+
+> **Important:** If you rotate `VAULT_ENCRYPTION_KEY`, existing secrets in the database cannot be decrypted. Back up your key and treat it like a master password.
+
+---
+
+## Docker Deployment
+
+The included `docker-compose.yml` mounts external volumes for the `.env` file and a markers directory, so secrets and state survive container restarts.
+
+1. Create the host directories and your `.env` file:
+   ```bash
+   mkdir -p /srv/server/storage/cove/markers
+   cp .env.exmaple /srv/server/storage/cove/.env
+   # Edit /srv/server/storage/cove/.env with your values
+   ```
+
+2. Ensure the `spark` Docker network exists (or update `docker-compose.yml` to match your network):
+   ```bash
+   docker network create spark
+   ```
+
+3. Start the service:
+   ```bash
+   docker compose up -d
+   ```
+
+   The container exposes port `2100` and restarts automatically unless stopped. A health check polls `/v0/health` every 10 seconds.
+
+4. To access the interactive CLI inside the running container:
+   ```bash
+   docker attach cove
+   ```
+
+   Use `Ctrl+P`, `Ctrl+Q` to detach without stopping the container.
+
+---
+
+## API Reference
+
+All endpoints are prefixed with `/v0/`.
+
+All responses use a uniform JSON envelope:
+```json
+{ "success": true, "data": { ... } }
+{ "success": false, "error": { "type": "error_code", "message": "human readable message" } }
+```
+
+All endpoints except `/v0/health` and `/v0/bootstrap/lighthouse` require a `Bearer` token:
+
+```
+Authorization: Bearer <COVE_CLIENT_SECRET>
+```
+
+All secret-by-ID endpoints (`/v0/secrets/{key}`) also require `X-Cove-Source`, which identifies the calling application and is written to the event log:
+
+```
+X-Cove-Source: my-app
+```
+
+---
+
+### Health Check
+
+**`GET /v0/health`** — No authentication required.
+
+```json
+{
+  "success": true,
+  "data": { "healthy": true, "time": "2026-05-15T12:00:00Z" }
+}
+```
+
+---
+
+### Verify Authentication
+
+**`GET /v0/auth`** — Requires authentication.
+
+```json
+{
+  "success": true,
+  "data": { "authenticated": true, "time": "2026-05-15T12:00:00Z" }
+}
+```
+
+---
+
+### List All Secrets (metadata only)
+
+**`GET /v0/secrets`** — Requires authentication.
+
+Returns public metadata for all secrets. Secret values are never included.
+
+```json
+{
+  "success": true,
+  "data": {
+    "secrets": [
+      {
+        "key": "my-api-key",
+        "version": 3,
+        "times_pulled": 12,
+        "created_at": "2026-01-01T00:00:00Z",
+        "updated_at": "2026-04-10T08:30:00Z"
+      }
+    ]
+  }
+}
+```
+
+---
+
+### Get a Secret
+
+**`GET /v0/secrets/{key}`** — Requires authentication and `X-Cove-Source`.
+
+Returns the decrypted secret value. Increments `times_pulled` and writes a `read` event to the log.
+
+```json
+{
+  "success": true,
+  "data": { "key": "my-api-key", "value": "abc123", "version": 3 }
+}
+```
+
+---
+
+### Create a Secret
+
+**`POST /v0/secrets/{key}`** — Requires authentication and `X-Cove-Source`.
+
+Request body:
+```json
+{ "value": "my-secret-value" }
+```
+
+Response (`201 Created`):
+```json
+{
+  "success": true,
+  "data": { "key": "my-api-key", "action": "created", "message": "my-api-key has been created." }
+}
+```
+
+Key validation: max 256 characters, only `[A-Za-z0-9\-_.]` allowed.
+
+---
+
+### Update a Secret
+
+**`PATCH /v0/secrets/{key}`** — Requires authentication and `X-Cove-Source`.
+
+Increments the version number and updates `last_modified`. The old encrypted value is preserved in the event log.
+
+Request body:
+```json
+{ "value": "new-secret-value" }
+```
+
+Response (`200 OK`):
+```json
+{
+  "success": true,
+  "data": { "key": "my-api-key", "action": "updated", "message": "my-api-key has been updated." }
+}
+```
+
+---
+
+### Delete a Secret
+
+**`DELETE /v0/secrets/{key}`** — Requires authentication and `X-Cove-Source`.
+
+Response (`200 OK`):
+```json
+{
+  "success": true,
+  "data": { "key": "my-api-key", "action": "deleted", "message": "my-api-key has been deleted." }
+}
+```
+
+---
+
+### Bootstrap
+
+**`GET /v0/bootstrap/lighthouse`** — No authentication required.
+
+Returns the `COVE_CLIENT_SECRET` in plaintext. This endpoint is one-use only: it creates a marker file on first call and returns `403 Forbidden` on subsequent calls until the marker is cleared via the CLI.
+
+This is intended for automated clients (e.g., [CoveClient](https://github.com/LSariol/CoveClient)) that need to retrieve their bearer token on first boot without any pre-shared credentials.
+
+```json
+{
+  "success": true,
+  "data": { "secret": "<COVE_CLIENT_SECRET>" }
+}
+```
+
+---
+
+## CLI Reference
+
+When Cove starts, a `Cove CLI>` prompt is available in the terminal (or via `docker attach`). All commands operate directly on the database.
+
+| Command | Alias | Usage | Description |
+|---------|-------|-------|-------------|
+| `get` | `g` | `get <key>` | Display the decrypted value of a secret |
+| `create` | `c` | `create <key> <value>` | Create a new secret |
+| `update` | `u` | `update <key> <value>` | Update an existing secret |
+| `delete` | `d` | `delete <key>` | Delete a secret (prompts for confirmation) |
+| `list` | `l` | `list` | List all secrets (metadata only) |
+| `list` | `l` | `list <term>` | List secrets whose keys start with `<term>` |
+| `list` | `l` | `list <term> fuzzy` | List secrets whose keys contain `<term>` |
+| `bootstrap` | `b` | `bootstrap clear` | Remove the bootstrap marker (re-enables the bootstrap endpoint) |
+| `bootstrap` | `b` | `bootstrap lock` | Create the bootstrap marker (disables the bootstrap endpoint) |
+| `help` | `h` | `help` | Show available commands |
+| `exit` | `quit` | `exit` | Shut down Cove |
+
+---
+
+## CoveClient
+
+[CoveClient](https://github.com/LSariol/CoveClient) is an official Go module that wraps the Cove HTTP API. It handles authentication, the `X-Cove-Source` header, and response envelope decoding, so consuming applications do not need to implement raw HTTP logic.
+
+```bash
+go get github.com/lsariol/coveclient
+```
+
+---
+
+## Security Notes
+
+- `COVE_CLIENT_SECRET` and `VAULT_ENCRYPTION_KEY` are auto-generated on first start if not provided, and written back to the `.env` file. Store these values securely — losing `VAULT_ENCRYPTION_KEY` means losing access to all stored secrets.
+- The bootstrap endpoint is designed for one-time automated use. After a client has retrieved its bearer token, use `bootstrap lock` (CLI) to disable it.
+- Cove is intended for internal/private networks. It does not implement TLS termination — place it behind a reverse proxy (e.g., Nginx, Caddy) if exposed beyond localhost.
+- All create, read, update, and delete operations are written to `cove.event_log`, which retains the encrypted old and new values for audit purposes.

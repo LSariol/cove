@@ -2,62 +2,76 @@ package database
 
 import (
 	"context"
+	"errors"
 	"fmt"
-	"time"
 
-	"github.com/LSariol/Cove/internal/crypt"
+	"github.com/LSariol/Cove/internal/encryption"
+	"github.com/jackc/pgx/v5"
 )
 
 // CreateSecret takes a secret and stores it into the Cove database
-func (d *Database) CreateSecret(ctx context.Context, s Secret) (Secret, error) {
-	var newSecret Secret
+func (d *Database) CreateSecret(ctx context.Context, key string, value string, source string) error {
+	var logInput EventLogInput
+	var insertSecret Secret
 
 	const query = `
 	INSERT INTO cove.secrets (secret_key, secret_value)
-	Values ($1, $2)
-	RETURNING secret_key, date_added;
-	`
+	VALUES ($1, $2)
+	RETURNING
+		id,
+		secret_key,
+		secret_value,
+		version;
+`
 
-	encryptedKey, err := crypt.Encrypt(s.Value)
+	encryptedValue, err := encryption.Encrypt(value)
 	if err != nil {
-		return newSecret, fmt.Errorf("encrypt: %w", err)
+		return fmt.Errorf("encrypt: %w", err)
 	}
-	s.Value = encryptedKey
 
-	row := d.Pool.QueryRow(ctx, query, s.Key, s.Value)
+	insertSecret.Key = key
+	insertSecret.Value = encryptedValue
+
+	row := d.Pool.QueryRow(ctx, query, insertSecret.Key, insertSecret.Value)
 
 	err = row.Scan(
-		&newSecret.Key,
-		&newSecret.DateAdded)
+		&logInput.SecretID,
+		&logInput.SecretKey,
+		&logInput.NewValue,
+		&logInput.Version,
+	)
+
+	logInput.Source = source
+	logInput.Modification = EventCreate
+	logInput.OldValue = nil
 
 	if err != nil {
-		return newSecret, fmt.Errorf("row.scan: %w", err)
+		return fmt.Errorf("row.scan: %w", err)
 	}
 
-	fmt.Printf("Inserted secret with key %s at %s\n", newSecret.Key, newSecret.DateAdded.Format(time.RFC3339))
-	return newSecret, nil
+	_ = d.LogEvent(ctx, logInput)
+
+	return nil
 }
 
-func (d *Database) GetSecret(ctx context.Context, key string) (Secret, error) {
+func (d *Database) GetSecret(ctx context.Context, key string, source string) (Secret, error) {
 	var s Secret
 
-	tx, _ := d.Pool.Begin(ctx)
-	defer tx.Rollback(ctx)
+	const query = `
+	UPDATE cove.secrets
+	SET times_pulled = times_pulled + 1
+	WHERE secret_key = $1
+	RETURNING
+		id,
+		secret_key,
+		secret_value,
+		version,
+		times_pulled,
+		date_added,
+		last_modified;
+`
 
-	if _, err := tx.Exec(ctx, `
-		UPDATE cove.secrets
-		SET 
-			times_pulled = times_pulled + 1
-		WHERE secret_key = $1
-	`, key); err != nil {
-		return s, err
-	}
-
-	row := d.Pool.QueryRow(ctx, `
-	SELECT id, secret_key, secret_value, version, times_pulled, date_added, last_modified
-	FROM cove.secrets 
-	WHERE secret_key=$1
-	`, key)
+	row := d.Pool.QueryRow(ctx, query, key)
 
 	err := row.Scan(
 		&s.Id,
@@ -72,14 +86,26 @@ func (d *Database) GetSecret(ctx context.Context, key string) (Secret, error) {
 		return s, fmt.Errorf("row.scan %q: %w", key, err)
 	}
 
-	decryptedVal, err := crypt.Decrypt(s.Value)
+	decryptedVal, err := encryption.Decrypt(s.Value)
 	if err != nil {
 		return s, fmt.Errorf("get secret %q: %w", key, err)
 	}
 
+	logInfo := EventLogInput{
+		SecretID:     s.Id,
+		SecretKey:    s.Key,
+		Version:      s.Version,
+		Modification: EventRead,
+		Source:       source,
+		OldValue:     &s.Value,
+		NewValue:     nil,
+	}
+
+	_ = d.LogEvent(ctx, logInfo)
+
 	s.Value = decryptedVal
 
-	return s, tx.Commit(ctx)
+	return s, nil
 }
 
 func (d *Database) GetAllKeys(ctx context.Context) ([]Secret, error) {
@@ -115,48 +141,157 @@ func (d *Database) GetAllKeys(ctx context.Context) ([]Secret, error) {
 		secrets = append(secrets, s)
 	}
 
-	if rows.Err() != nil {
+	if err := rows.Err(); err != nil {
 		return nil, fmt.Errorf("rows iteration: %w", err)
 	}
 
 	return secrets, nil
 }
 
-func (d *Database) UpdateSecret(ctx context.Context, s Secret) error {
-	const query = `
+func (d *Database) UpdateSecret(ctx context.Context, key string, value string, source string) error {
+
+	const querySelect = `
+	SELECT
+		id,
+		secret_key,
+		secret_value,
+		version,
+		times_pulled,
+		date_added,
+		last_modified
+	FROM cove.secrets
+	WHERE secret_key = $1;
+	`
+
+	const queryUpdate = `
 	UPDATE cove.secrets
 	SET
 		secret_value = $2,
-		version = version + 1
+		version = version + 1,
+		last_modified = now()
 	WHERE secret_key = $1
+	RETURNING
+		id,
+		secret_key,
+		secret_value,
+		version,
+		times_pulled,
+		date_added,
+		last_modified;
 	`
-	encryptedVal, err := crypt.Encrypt(s.Value)
+
+	var oldSecret Secret
+	err := d.Pool.QueryRow(ctx, querySelect, key).Scan(
+		&oldSecret.Id,
+		&oldSecret.Key,
+		&oldSecret.Value,
+		&oldSecret.Version,
+		&oldSecret.TimesPulled,
+		&oldSecret.DateAdded,
+		&oldSecret.LastModified,
+	)
+	if err != nil {
+		return fmt.Errorf("select existing secret %q: %w", key, err)
+	}
+
+	encryptedVal, err := encryption.Encrypt(value)
 	if err != nil {
 		return fmt.Errorf("encrypt: %w", err)
 	}
 
-	cmdTag, err := d.Pool.Exec(ctx, query, s.Key, encryptedVal)
+	var newSecret Secret
+	err = d.Pool.QueryRow(ctx, queryUpdate, key, encryptedVal).Scan(
+		&newSecret.Id,
+		&newSecret.Key,
+		&newSecret.Value,
+		&newSecret.Version,
+		&newSecret.TimesPulled,
+		&newSecret.DateAdded,
+		&newSecret.LastModified,
+	)
 	if err != nil {
-		return fmt.Errorf("pool.Exec: %w", err)
+		return fmt.Errorf("update secret %q: %w", key, err)
+	}
+	oldVal := oldSecret.Value
+	newVal := newSecret.Value
+
+	logInfo := EventLogInput{
+		SecretID:     newSecret.Id,
+		SecretKey:    newSecret.Key,
+		Version:      newSecret.Version,
+		Modification: EventUpdate,
+		Source:       source,
+		OldValue:     &oldVal,
+		NewValue:     &newVal,
 	}
 
-	fmt.Println("Rows affected: ", cmdTag.RowsAffected())
+	_ = d.LogEvent(ctx, logInfo)
+
 	return nil
 }
 
-func (d *Database) DeleteSecret(ctx context.Context, key string) error {
+func (d *Database) DeleteSecret(ctx context.Context, key string, source string) error {
 	const query = `
 	DELETE FROM cove.secrets
-	WHERE secret_key = $1;
+	WHERE secret_key = $1
+	RETURNING
+		id,
+		secret_key,
+		secret_value,
+		version,
+		times_pulled,
+		date_added,
+		last_modified;
+	`
+	var deleted Secret
+
+	row := d.Pool.QueryRow(ctx, query, key)
+
+	err := row.Scan(
+		&deleted.Id,
+		&deleted.Key,
+		&deleted.Value,
+		&deleted.Version,
+		&deleted.TimesPulled,
+		&deleted.DateAdded,
+		&deleted.LastModified,
+	)
+	if err != nil {
+		if errors.Is(err, pgx.ErrNoRows) {
+			return fmt.Errorf("no secret found with key %q", key)
+		}
+		return fmt.Errorf("delete scan %q: %w", key, err)
+	}
+
+	oldVal := deleted.Value
+
+	logInfo := EventLogInput{
+		SecretID:     deleted.Id,
+		SecretKey:    deleted.Key,
+		Version:      deleted.Version,
+		Modification: EventDelete,
+		Source:       source,
+		OldValue:     &oldVal,
+		NewValue:     nil,
+	}
+
+	_ = d.LogEvent(ctx, logInfo)
+
+	return nil
+}
+
+func (d *Database) LogEvent(ctx context.Context, logInfo EventLogInput) error {
+
+	const query = `
+	INSERT INTO cove.event_log 
+	(secret_id, secret_key, version, modification, source, old_value, new_value)
+	VALUES ($1, $2, $3, $4, $5, $6, $7);
 	`
 
-	cmdTag, err := d.Pool.Exec(ctx, query, key)
+	_, err := d.Pool.Exec(ctx, query, logInfo.SecretID, logInfo.SecretKey, logInfo.Version, logInfo.Modification, logInfo.Source, logInfo.OldValue, logInfo.NewValue)
 	if err != nil {
-		return fmt.Errorf("delete secret %q: %w", key, err)
+		return fmt.Errorf("LogEvent: %w", err)
 	}
-	if cmdTag.RowsAffected() == 0 {
-		return fmt.Errorf("no secret found with key %q", key)
-	}
-	return nil
 
+	return nil
 }

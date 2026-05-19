@@ -55,7 +55,7 @@ func (c *CLI) parseCLI(ctx context.Context, args []string) {
 			return
 		}
 
-		res, err := c.DB.GetSecret(ctx, args[1])
+		res, err := c.DB.GetSecret(ctx, args[1], "cove_cli")
 		if err != nil {
 			errorLog(fmt.Sprintf("error getting %q: %v", args[1], err))
 			return
@@ -72,18 +72,16 @@ func (c *CLI) parseCLI(ctx context.Context, args []string) {
 			return
 		}
 
-		var newSecret database.Secret = database.Secret{
-			Key:   args[1],
-			Value: args[2],
-		}
+		key := args[1]
+		value := args[2]
 
-		secret, err := c.DB.CreateSecret(ctx, newSecret)
+		err := c.DB.CreateSecret(ctx, key, value, "cove_cli")
 		if err != nil {
 			errorLog(err.Error())
 			return
 		}
 
-		successLog(fmt.Sprintf("%s has been created at %q\n", secret.Key, secret.DateAdded))
+		successLog(fmt.Sprintf("%s has been created and stored.\n", key))
 		return
 
 	case "delete", "d":
@@ -111,7 +109,7 @@ func (c *CLI) parseCLI(ctx context.Context, args []string) {
 			return
 		}
 
-		err := c.DB.DeleteSecret(ctx, args[1])
+		err := c.DB.DeleteSecret(ctx, args[1], "cove_cli")
 		if err != nil {
 			errorLog(err.Error())
 			return
@@ -128,12 +126,10 @@ func (c *CLI) parseCLI(ctx context.Context, args []string) {
 			return
 		}
 
-		var newSecret database.Secret = database.Secret{
-			Key:   args[1],
-			Value: args[2],
-		}
+		key := args[1]
+		value := args[2]
 
-		err := c.DB.UpdateSecret(ctx, newSecret)
+		err := c.DB.UpdateSecret(ctx, key, value, "cove_cli")
 		if err != nil {
 			errorLog(err.Error())
 			return
@@ -163,6 +159,36 @@ func (c *CLI) parseCLI(ctx context.Context, args []string) {
 			infoLog("list [term] [fuzzy|f]")
 			return
 		}
+	// case "logs":
+
+	// 	switch len(args) {
+	// 	case 1:
+	// 		c.PullLogs()
+	// 	case 2:
+
+	// 		num, err := strconv.Atoi(args[1])
+	// 		if err != nil {
+	// 			errorLog(err.Error())
+	// 			return
+	// 		}
+
+	// 		if num == 0 {
+	// 			warningLog("Number must be larger than 0")
+	// 		}
+
+	// 		logs, err := c.PullLogs()
+	// 		if err != nil {
+	// 			errorLog(err.Error())
+	// 			return
+	// 		}
+
+	// 		displayLogs(logs)
+
+	// 	default:
+	// 		warningLog("Logs takes at most 1 additional argument.")
+	// 		infoLog("list [number of logs to pull]")
+	// 		return
+	// 	}
 
 	case "bootstrap", "b":
 
@@ -284,7 +310,7 @@ func (c *CLI) displayPublicVault(ctx context.Context, term string, mode string) 
 	}
 
 	const (
-		keyW    = 30
+		keyW    = 35
 		dateW   = 19
 		versW   = 7
 		pulledW = 12

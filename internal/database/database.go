@@ -26,14 +26,13 @@ func NewDB() *Database {
 // Connect opens a pgxpool connection using environment variables and validlates its a successful connection with Ping
 func (d *Database) Connect(ctx context.Context) error {
 
-	connString := fmt.Sprintf(d.ConnString, os.Getenv("COVE_USER"), os.Getenv("COVE_PASSWORD"), "cove_db")
-	pool, err := pgxpool.New(ctx, connString)
+	pool, err := pgxpool.New(ctx, d.ConnString)
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "Unable to connect to database: %v\n", err)
 		os.Exit(1)
 	}
 
-	pingCtx, cancel := context.WithTimeout(ctx, 2*time.Second)
+	pingCtx, cancel := context.WithTimeout(ctx, 3*time.Second)
 	defer cancel()
 	if err := pool.Ping(pingCtx); err != nil {
 		pool.Close()

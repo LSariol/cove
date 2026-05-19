@@ -4,7 +4,7 @@ import (
 	"fmt"
 	"os"
 
-	"github.com/LSariol/Cove/internal/crypt"
+	"github.com/LSariol/Cove/internal/encryption"
 	"github.com/joho/godotenv"
 )
 
@@ -42,7 +42,7 @@ func Ensure() error {
 
 	clientSecret := os.Getenv(clientSecretKey)
 	if clientSecret == "" {
-		newValue, err := crypt.GenerateSecret(32)
+		newValue, err := encryption.GenerateSecret(32)
 		if err != nil {
 			return err
 		}
@@ -54,7 +54,7 @@ func Ensure() error {
 
 	encryptionKey := os.Getenv(encryptionSecretKey)
 	if encryptionKey == "" {
-		newValue, err := crypt.GenerateSecret(45)
+		newValue, err := encryption.GenerateSecret(45)
 		if err != nil {
 			return err
 		}

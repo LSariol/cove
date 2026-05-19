@@ -1,43 +1,40 @@
 package server
 
 import (
+	"crypto/subtle"
 	"net/http"
 	"os"
 	"strings"
 )
 
-// Gets client secret from environment variables
 func getClientSecret() string {
-
 	return os.Getenv("COVE_CLIENT_SECRET")
-
 }
 
-// Middleware function to handle authentication of client secret
+// authenticateClientSecret is middleware that validates the Bearer token in the Authorization header.
 func authenticateClientSecret(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 
 		authHeader := r.Header.Get("Authorization")
 		if authHeader == "" {
-			http.Error(w, "Unauthorized: Missing client secret", http.StatusUnauthorized)
+			writeError(w, http.StatusUnauthorized, "missing_token", "Authorization header is required")
 			return
 		}
 
-		tokenParts := strings.Split(authHeader, " ")
+		tokenParts := strings.SplitN(authHeader, " ", 2)
 		if len(tokenParts) != 2 || tokenParts[0] != "Bearer" {
-			http.Error(w, "Unauthorized: Invalid Authorization header", http.StatusUnauthorized)
+			writeError(w, http.StatusUnauthorized, "invalid_token_format", "Authorization header must be in the form: Bearer <token>")
 			return
 		}
 
-		providedSecret := tokenParts[1]
-		storedSecret := getClientSecret()
+		provided := []byte(tokenParts[1])
+		stored := []byte(getClientSecret())
 
-		if providedSecret != storedSecret {
-			http.Error(w, "Unauthorized: Invalid client secret", http.StatusUnauthorized)
+		if subtle.ConstantTimeCompare(provided, stored) != 1 {
+			writeError(w, http.StatusUnauthorized, "invalid_token", "the provided token is invalid")
 			return
 		}
 
 		next.ServeHTTP(w, r)
-
 	})
 }
