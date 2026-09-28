@@ -348,10 +348,10 @@ func (c *CLI) displayPublicVault(ctx context.Context, term string, mode string) 
 		row := fmt.Sprintf(
 			"%-*s | %-*s | %-*s | %-*d | %-*d\n",
 			keyW, entry.Key,
-			dateW, formatTime(entry.DateAdded),
-			dateW, formatTime(entry.LastModified),
+			dateW, formatTime(entry.CreatedAt),
+			dateW, formatTime(entry.UpdatedAt),
 			versW, entry.Version,
-			pulledW, entry.TimesPulled,
+			pulledW, entry.ReadCount,
 		)
 		plainLog(row)
 	}

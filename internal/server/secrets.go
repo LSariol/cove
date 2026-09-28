@@ -21,9 +21,9 @@ func (s *Server) getAllSecrets(w http.ResponseWriter, r *http.Request) {
 		pubList.Secrets = append(pubList.Secrets, SecretSummary{
 			Key:         key.Key,
 			Version:     key.Version,
-			TimesPulled: key.TimesPulled,
-			CreatedAt:   key.DateAdded,
-			UpdatedAt:   key.LastModified,
+			TimesPulled: key.ReadCount,
+			CreatedAt:   key.CreatedAt,
+			UpdatedAt:   key.UpdatedAt,
 		})
 	}
 

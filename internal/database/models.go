@@ -3,30 +3,30 @@ package database
 import "time"
 
 type Secret struct {
-	Id           string
-	Key          string
-	Value        string
-	Version      int
-	TimesPulled  int
-	DateAdded    time.Time
-	LastModified time.Time
+	Id        string
+	Key       string
+	Value     string
+	Version   int
+	ReadCount int
+	CreatedAt time.Time
+	UpdatedAt time.Time
 }
 
-type EventModification string
+type EventKind string
 
 const (
-	EventCreate EventModification = "create"
-	EventRead   EventModification = "read"
-	EventUpdate EventModification = "update"
-	EventDelete EventModification = "delete"
+	EventCreate EventKind = "create"
+	EventRead   EventKind = "read"
+	EventUpdate EventKind = "update"
+	EventDelete EventKind = "delete"
 )
 
 type EventLogInput struct {
-	SecretID     string
-	SecretKey    string
-	Version      int
-	Modification EventModification
-	Source       string
-	OldValue     *string
-	NewValue     *string
+	SecretID          string
+	SecretKey         string
+	SecretVersion     int
+	Kind              EventKind
+	Source            string
+	OldEncryptedValue *string
+	NewEncryptedValue *string
 }
