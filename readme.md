@@ -4,6 +4,8 @@
 
 Secrets are encrypted before being written to the database. Keys are never exposed through the list endpoint — only metadata (version, timestamps, pull count) is returned. Every read, write, update, and delete is written to an append-only event log.
 
+> Full documentation (internals, deployment, error reference, known issues): [DOCUMENTATION.md](DOCUMENTATION.md)
+
 ---
 
 ## Features
@@ -42,33 +44,22 @@ Cove runs two things concurrently: the HTTP server (default port `2110` for dev,
 
 ## Database Setup
 
-Cove expects a `cove` schema with two tables. Run the following SQL against your PostgreSQL instance before starting the server:
+Cove manages its own schema with [goose](https://github.com/pressly/goose) migrations (`internal/database/migrations/`). You only need to create the roles and the database once, as a Postgres superuser:
 
 ```sql
-CREATE SCHEMA IF NOT EXISTS cove;
+CREATE ROLE cove_owner    NOLOGIN;
+CREATE ROLE cove_migrator LOGIN PASSWORD '...';
+CREATE ROLE cove_app      LOGIN PASSWORD '...';
+CREATE ROLE cove_reader   LOGIN PASSWORD '...';
+GRANT cove_owner TO cove_migrator;
+ALTER ROLE cove_migrator SET role = 'cove_owner';
 
-CREATE TABLE IF NOT EXISTS cove.secrets (
-    id            UUID PRIMARY KEY DEFAULT gen_random_uuid(),
-    secret_key    TEXT NOT NULL UNIQUE,
-    secret_value  TEXT NOT NULL,
-    version       INT NOT NULL DEFAULT 1,
-    times_pulled  INT NOT NULL DEFAULT 0,
-    date_added    TIMESTAMPTZ NOT NULL DEFAULT now(),
-    last_modified TIMESTAMPTZ NOT NULL DEFAULT now()
-);
-
-CREATE TABLE IF NOT EXISTS cove.event_log (
-    id            BIGSERIAL PRIMARY KEY,
-    secret_id     UUID,
-    secret_key    TEXT,
-    version       INT,
-    modification  TEXT,
-    source        TEXT,
-    old_value     TEXT,
-    new_value     TEXT,
-    created_at    TIMESTAMPTZ NOT NULL DEFAULT now()
-);
+CREATE DATABASE cove_db OWNER cove_owner;
+REVOKE ALL ON DATABASE cove_db FROM PUBLIC;
+GRANT CONNECT ON DATABASE cove_db TO cove_migrator, cove_app, cove_reader;
 ```
+
+Then set `COVE_MIGRATE_DATABASE_URL` (as `cove_migrator`) and start Cove. It creates the schema and applies every pending migration before serving. `cove migrate status` shows what's applied. See [DOCUMENTATION.md §4](DOCUMENTATION.md#4-database) for details.
 
 ---
 
@@ -88,7 +79,8 @@ CREATE TABLE IF NOT EXISTS cove.event_log (
 3. Edit `.env` and fill in your database URL and optionally your secrets. If `COVE_CLIENT_SECRET` or `VAULT_ENCRYPTION_KEY` are left empty, Cove will generate and persist them automatically on first start.
 
    ```env
-   COVE_DATABASE_URL=postgres://user:password@localhost:5432/yourdb
+   COVE_DATABASE_URL=postgres://cove_app:password@localhost:5432/cove_db
+   COVE_MIGRATE_DATABASE_URL=postgres://cove_migrator:password@localhost:5432/cove_db
 
    # Leave empty to auto-generate on first start, or provide your own values:
    COVE_CLIENT_SECRET=
@@ -114,7 +106,8 @@ CREATE TABLE IF NOT EXISTS cove.event_log (
 
 | Variable             | Required | Description |
 |----------------------|----------|-------------|
-| `COVE_DATABASE_URL`  | Yes      | PostgreSQL connection string (`postgres://user:pass@host:port/db`) |
+| `COVE_DATABASE_URL`  | Yes      | PostgreSQL connection string for the runtime role (`postgres://cove_app:pass@host:port/cove_db`) |
+| `COVE_MIGRATE_DATABASE_URL` | No | Connection string for the migrator role. When set, pending migrations are applied on startup. When unset, the database must already be migrated. |
 | `COVE_CLIENT_SECRET` | No       | Bearer token clients must send. Auto-generated and persisted if empty. |
 | `VAULT_ENCRYPTION_KEY` | No     | Key used to derive the AES-256 encryption key. Auto-generated and persisted if empty. |
 | `APP_ENV`            | No       | Runtime environment label (`DEV` or `PROD`) |
