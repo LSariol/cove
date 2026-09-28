@@ -2,14 +2,15 @@ package database
 
 import "time"
 
+// Secret is a row of cove.secrets. EncryptedValue is never plaintext.
 type Secret struct {
-	Id        string
-	Key       string
-	Value     string
-	Version   int
-	ReadCount int
-	CreatedAt time.Time
-	UpdatedAt time.Time
+	ID             string
+	Key            string
+	EncryptedValue string
+	Version        int
+	ReadCount      int
+	CreatedAt      time.Time
+	UpdatedAt      time.Time
 }
 
 type EventKind string

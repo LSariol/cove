@@ -3,16 +3,11 @@ package server
 import (
 	"crypto/subtle"
 	"net/http"
-	"os"
 	"strings"
 )
 
-func getClientSecret() string {
-	return os.Getenv("COVE_CLIENT_SECRET")
-}
-
-// authenticateClientSecret is middleware that validates the Bearer token in the Authorization header.
-func authenticateClientSecret(next http.Handler) http.Handler {
+// requireClientSecret is middleware that validates the Bearer token in the Authorization header.
+func (s *Server) requireClientSecret(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 
 		authHeader := r.Header.Get("Authorization")
@@ -28,7 +23,7 @@ func authenticateClientSecret(next http.Handler) http.Handler {
 		}
 
 		provided := []byte(tokenParts[1])
-		stored := []byte(getClientSecret())
+		stored := []byte(s.clientSecret)
 
 		if subtle.ConstantTimeCompare(provided, stored) != 1 {
 			writeError(w, http.StatusUnauthorized, "invalid_token", "the provided token is invalid")

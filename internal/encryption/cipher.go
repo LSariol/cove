@@ -1,3 +1,4 @@
+// Package encryption encrypts secret values at rest and generates random secrets.
 package encryption
 
 import (
@@ -7,21 +8,23 @@ import (
 	"crypto/sha256"
 	"encoding/base64"
 	"fmt"
-	"os"
 )
 
-func getEncryptionKey() string {
-
-	return os.Getenv("VAULT_ENCRYPTION_KEY")
-
+// Cipher encrypts and decrypts values with AES-256-GCM. The AES key is the
+// SHA-256 hash of the configured VAULT_ENCRYPTION_KEY.
+type Cipher struct {
+	key [32]byte
 }
 
-func Encrypt(data string) (string, error) {
-	encryptionKey := getEncryptionKey()
+// NewCipher returns a Cipher whose key is derived from secret.
+func NewCipher(secret string) *Cipher {
+	return &Cipher{key: sha256.Sum256([]byte(secret))}
+}
+
+func (c *Cipher) Encrypt(data string) (string, error) {
 
 	// Generate AES cipher block from the encryption key
-	key := sha256.Sum256([]byte(encryptionKey))
-	block, err := aes.NewCipher(key[:])
+	block, err := aes.NewCipher(c.key[:])
 	if err != nil {
 		return "", fmt.Errorf("new block: %w", err)
 	}
@@ -45,16 +48,12 @@ func Encrypt(data string) (string, error) {
 
 }
 
-func Decrypt(data string) (string, error) {
-
-	encryptionKey := getEncryptionKey()
+func (c *Cipher) Decrypt(data string) (string, error) {
 
 	//Decode the cipher from base64
 	cipherText, _ := base64.URLEncoding.DecodeString(data)
 
-	// Extract the nonce from the beginning of the ciphertext
-	key := sha256.Sum256([]byte(encryptionKey))
-	block, err := aes.NewCipher(key[:])
+	block, err := aes.NewCipher(c.key[:])
 	if err != nil {
 		return "", err
 	}

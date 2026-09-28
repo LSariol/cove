@@ -2,7 +2,7 @@
 
 Full reference for Cove, a self-hosted secret vault. Version v0.2.0, API version `v0`.
 
-The [README](readme.md) is a quick overview. This document goes further: how each piece works internally, how the server is deployed, how secrets are stored, and the known issues in the current code.
+The [README](README.md) is a quick overview. This document goes further: how each piece works internally, how the server is deployed, how secrets are stored, and the known issues in the current code.
 
 Companion client library: [CoveClient](https://github.com/LSariol/CoveClient). It has its own `DOCUMENTATION.md`.
 
@@ -49,46 +49,70 @@ Main properties:
 ## 2. Architecture
 
 ```
-cmd/cove/main.go              Entry point
-internal/config/env.go        .env loading, generating missing secrets
-internal/database/
-    database.go               pgxpool connection (NewDB, Connect, Close)
-    models.go                 Secret, EventLogInput, event types
-    store.go                  CRUD queries + LogEvent
-internal/encryption/
-    encryption.go             Encrypt / Decrypt (AES-256-GCM)
-    generator.go              GenerateSecret (random alphanumeric)
-internal/server/
+cmd/cove/main.go              Entry point: reads config, wires packages together, runs `migrate` or the server + CLI
+internal/
+  config/config.go            Config struct: every setting, read from the environment once
+  encryption/
+    cipher.go                 Cipher: Encrypt / Decrypt (AES-256-GCM)
+    random.go                 GenerateSecret (random alphanumeric)
+  database/
+    database.go               pgxpool connection (New, Connect, Close)
+    migrate.go, migrations/   goose migrations and the startup schema check
+    store.go                  SQL queries only; values in and out are always encrypted
+    types.go                  Secret row, EventLogInput, event kinds
+  vault/
+    vault.go                  The rules for secrets: encrypt/decrypt, store, and log every operation
+    keys.go                   ValidateKey
+  bootstrap/marker.go         Marker file that locks the bootstrap endpoint (Lock / Clear)
+  server/
     server.go                 Server struct, ListenAndServe
-    handlers.go               Routes, health/auth/bootstrap handlers, key validation, marker files
-    secrets.go                Secret CRUD handlers, writeResponse / writeError
-    auth.go                   Bearer-token middleware
-    models.go                 JSON response types
-internal/cli/cli.go           Interactive CLI
+    routes.go                 URL → handler table
+    middleware.go             Bearer-token check
+    secrets.go                /v0/secrets handlers
+    system.go                 /v0/health, /v0/auth
+    bootstrap.go              /v0/bootstrap/lighthouse
+    respond.go                JSON envelope helpers (writeResponse / writeError)
+    api_types.go              JSON response types
+  cli/
+    shell.go                  CLI struct and the prompt loop
+    commands.go               Command table (names, aliases, usage, help) and help/exit
+    cmd_secrets.go            get / create / update / delete / list
+    cmd_bootstrap.go          bootstrap clear / lock
+    output.go                 Colored output helpers
 ```
+
+Dependencies point one way: `main` → `server` / `cli` → `vault` → `database` + `encryption`, with `bootstrap` used by `server` and `cli`. Only `config` reads environment variables; every other package gets its settings passed in.
+
+**Where things go:**
+- A rule about secrets (validation, what gets logged, transactions) → `vault`. Both the API and the CLI get it automatically.
+- A new SQL query → `database/store.go`. A schema change → a new migration.
+- A new API route → a handler in `server/`, registered in `routes.go`.
+- A new CLI command → a function in a `cli/cmd_*.go` file, plus one entry in `commandTable()` in `commands.go`. `help` picks it up automatically.
+- A new setting → a field in `config.Config`, read in `FromEnv()`.
 
 ### Startup sequence (`cmd/cove/main.go`)
 
 1. `config.Load()` loads `.env` from the working directory. If that file doesn't exist, it tries `/app/vault/.env`. If neither exists, it panics.
-2. `config.Ensure()` checks for `COVE_CLIENT_SECRET` and `VAULT_ENCRYPTION_KEY`. If either is empty, it generates a value and writes it back to the file at `APP_ENV_PATH` (see [§12](#12-known-issues-and-gotchas): the value is written to the file but not loaded into the running process).
+2. `config.FromEnv()` reads every setting into a `Config`, and `config.Ensure()` checks for `COVE_CLIENT_SECRET` and `VAULT_ENCRYPTION_KEY`. If either is empty, it generates a value and writes it back to the file at `APP_ENV_PATH` (see [§12](#12-known-issues-and-gotchas): the value is written to the file but not loaded into the running process).
 3. A context is created that is cancelled on `SIGINT` / `SIGTERM`.
 4. If `COVE_MIGRATE_DATABASE_URL` is set, pending database migrations are applied (see [§4](#4-database)). A failed migration stops startup.
-5. `database.NewDB()` reads `COVE_DATABASE_URL`, and `Connect()` opens a `pgxpool` and pings it with a 3-second timeout. If this fails, the process exits.
+5. `database.New(cfg.DatabaseURL)` and `Connect()` opens a `pgxpool` and pings it with a 3-second timeout. If this fails, the process exits.
 6. `CheckSchemaVersion()` confirms every migration built into this binary has been applied. If not, Cove stops with a message saying to set `COVE_MIGRATE_DATABASE_URL`.
-7. The HTTP server starts in a goroutine (`srv.Start()`).
-8. The CLI loop runs on the main goroutine (`cli.StartCLI(ctx)`).
-9. When stdin closes, `StartCLI` returns and `main` waits for a signal (`<-ctx.Done()`). So Cove can run headless: with no stdin attached, the API keeps serving.
+7. A `vault.Vault` is built from the database and an `encryption.Cipher`, and shared by the server and CLI.
+8. The HTTP server starts in a goroutine (`srv.Start()`).
+9. The CLI loop runs on the main goroutine (`cli.StartCLI(ctx)`).
+10. When stdin closes, `StartCLI` returns and `main` waits for a signal (`<-ctx.Done()`). So Cove can run headless: with no stdin attached, the API keeps serving.
 
 ### Request flow
 
 ```
 HTTP request
-  → http.ServeMux (handlers.go: defineRoutes)
-  → authenticateClientSecret middleware (auth.go)       [not for /health, /bootstrap]
-  → handleSecretsCollection / handleSecretID            [path + key + X-Cove-Source checks]
+  → http.ServeMux (routes.go: defineRoutes)
+  → requireClientSecret middleware (middleware.go)      [not for /health, /bootstrap]
+  → handleSecretsCollection / handleSecretID (secrets.go) [path + key + X-Cove-Source checks]
   → getSecret / postSecret / patchSecret / deleteSecret (secrets.go)
-  → database.* (store.go) → encryption.Encrypt/Decrypt
-  → database.LogEvent
+  → vault.Get / Create / Update / Delete / List → encryption.Cipher
+  → database store queries (store.go) + LogEvent
   → writeResponse / writeError (JSON envelope)
 ```
 
@@ -100,13 +124,13 @@ All configuration comes from environment variables. `config.Load()` reads them f
 
 | Variable | Required | Used by | Description |
 |---|---|---|---|
-| `COVE_DATABASE_URL` | **Yes** | `database.NewDB` | Connection string for the runtime role, e.g. `postgres://cove_app:pass@sparkdb:5432/cove_db`. Not in `.env.exmaple`; you must add it. |
+| `COVE_DATABASE_URL` | **Yes** | `database.New` | Connection string for the runtime role, e.g. `postgres://cove_app:pass@sparkdb:5432/cove_db`. Not in `.env.example`; you must add it. |
 | `COVE_MIGRATE_DATABASE_URL` | No | `database.Migrate` | Connection string for the migrator role, e.g. `postgres://cove_migrator:pass@sparkdb:5432/cove_db`. When set, Cove applies pending migrations on startup and `cove migrate` works. When unset, the database must already be migrated. |
-| `COVE_CLIENT_SECRET` | Yes* | `server/auth.go`, bootstrap | Bearer token that clients must send. *Generated (32 chars) if empty. |
+| `COVE_CLIENT_SECRET` | Yes* | `server` (middleware, bootstrap) | Bearer token that clients must send. *Generated (32 chars) if empty. |
 | `VAULT_ENCRYPTION_KEY` | Yes* | `encryption` | Master key material. SHA-256 of this value is the AES key. *Generated (45 chars) if empty. |
 | `APP_PORT` | **Yes** | `server.Start` | Listen port. The server binds `0.0.0.0:$APP_PORT`. |
 | `APP_ENV_PATH` | Yes* | `config.Ensure` | File that generated secrets are written to. *Only needed when a secret has to be generated. |
-| `APP_MARKER_PATH` | No | bootstrap marker | Directory for the `bootstrap_completed` marker. Default: `/app/vault/markers`. |
+| `APP_MARKER_PATH` | No | `bootstrap.Marker` | Directory for the `bootstrap_completed` marker. Default: `/app/vault/markers`. |
 | `APP_ENV` | No | — | `DEV` / `PROD` label. Not read by the code. |
 | `APP_VAULT_PATH` | No | — | Left over from the old `vault.json` storage. Not read by the code. |
 | `APP_MARKER_DIR` | No | — | Set in `docker-compose.yml`, but **the code reads `APP_MARKER_PATH`**. In Docker it works anyway because the default path is the same. |
@@ -176,14 +200,14 @@ Rules for new migrations:
 
 ### `cove.event_log`
 
-Every operation in `store.go` writes one row through `LogEvent`:
+Every operation in `vault` writes one row through `LogEvent`:
 
 | `kind` | `old_encrypted_value` | `new_encrypted_value` | Written by |
 |---|---|---|---|
-| `create` | `NULL` | new ciphertext | `CreateSecret` |
-| `read` | current ciphertext | `NULL` | `GetSecret` |
-| `update` | previous ciphertext | new ciphertext | `UpdateSecret` |
-| `delete` | deleted ciphertext | `NULL` | `DeleteSecret` |
+| `create` | `NULL` | new ciphertext | `Vault.Create` |
+| `read` | current ciphertext | `NULL` | `Vault.Get` |
+| `update` | previous ciphertext | new ciphertext | `Vault.Update` |
+| `delete` | deleted ciphertext | `NULL` | `Vault.Delete` |
 
 `kind` is the enum `cove.secret_event_kind`. `source` is the `X-Cove-Source` header value for API calls, or `cove_cli` for CLI calls. `secret_version` is the secret's version after the operation. `occurred_at` is set automatically.
 
@@ -206,9 +230,9 @@ WHERE secret_key = 'my-key' ORDER BY occurred_at;
 
 ## 5. Encryption
 
-`internal/encryption/encryption.go`
+`internal/encryption/cipher.go`
 
-- **Key:** `sha256.Sum256([]byte(os.Getenv("VAULT_ENCRYPTION_KEY")))`, which gives 32 bytes, so AES-256. The env var is read on every call.
+- **Key:** `sha256.Sum256([]byte(VAULT_ENCRYPTION_KEY))`, which gives 32 bytes, so AES-256. It's computed once, when `encryption.NewCipher` is called at startup.
 - **Mode:** AES-GCM with a random 12-byte nonce for each encryption.
 - **Stored format:** `base64.URLEncoding( nonce || ciphertext || GCM tag )`.
 - **Decrypt:** base64url-decodes the value, splits off the first 12 bytes as the nonce, then `gcm.Open`. GCM authenticates the data, so a wrong key or tampered value returns an error instead of garbage.
@@ -240,7 +264,7 @@ Every route except `/v0/health` and `/v0/bootstrap/lighthouse` needs:
 Authorization: Bearer <COVE_CLIENT_SECRET>
 ```
 
-The middleware (`auth.go`) checks these in order:
+The middleware (`middleware.go`) checks these in order:
 
 | Condition | Status | `error.type` |
 |---|---|---|
@@ -401,7 +425,7 @@ Output colors: green = success, yellow = warning, red = error, cyan = info, plai
 Prerequisites: Go 1.25.1+ and a PostgreSQL instance with the schema from [§4](#4-database).
 
 ```bash
-cp .env.exmaple .env
+cp .env.example .env
 ```
 
 Edit `.env`:
@@ -416,7 +440,7 @@ APP_ENV_PATH=.env
 APP_MARKER_PATH=./markers
 ```
 
-> **Important:** `.env.exmaple` uses the literal text `Kept Empty` as the value of both secrets. That's a non-empty string, so Cove will use it as-is and won't generate anything. Delete it or replace it with real values.
+> **Important:** `.env.example` uses the literal text `Kept Empty` as the value of both secrets. That's a non-empty string, so Cove will use it as-is and won't generate anything. Delete it or replace it with real values.
 
 ```bash
 go run ./cmd/cove
@@ -457,7 +481,7 @@ Because `.env` is mounted read-only, **the host `.env` must already contain `COV
 # on the server
 mkdir -p /srv/server/storage/cove/markers
 touch /srv/server/storage/cove/vault.json
-cp .env.exmaple /srv/server/storage/cove/.env
+cp .env.example /srv/server/storage/cove/.env
 # edit it: COVE_DATABASE_URL, COVE_CLIENT_SECRET, VAULT_ENCRYPTION_KEY
 chmod 600 /srv/server/storage/cove/.env
 
@@ -523,13 +547,13 @@ These are found in the v0.2.0 code and haven't been fixed. They're grouped by ho
    - Every authenticated API call returns `401`, and bootstrap returns `500`.
    - **Workaround:** after the first start with empty secrets, stop Cove and start it again before storing anything.
 2. **Read-only `.env` in Docker.** If either secret is missing from the host `.env`, `Ensure` fails to write and `main` panics. Pre-fill both values (see [§10](#10-deploying-with-docker)).
-3. **`.env.exmaple` placeholders.** `Kept Empty` is a real value, so no secrets get generated, and the vault key becomes the literal string `Kept Empty`.
+3. **`.env.example` placeholders.** `Kept Empty` is a real value, so no secrets get generated, and the vault key becomes the literal string `Kept Empty`.
 
 ### Configuration mismatches
 
 4. `docker-compose.yml` sets `APP_MARKER_DIR`, but the code reads `APP_MARKER_PATH`. It works only because the default (`/app/vault/markers`) matches.
 5. `APP_VAULT_PATH`, the `vault.json` mount, and `APP_ENV` are unused leftovers.
-6. `COVE_DATABASE_URL` is missing from `.env.exmaple`. The filename itself is misspelled (`exmaple`).
+6. `.env.example` still uses the `Kept Empty` placeholders (see item 3).
 7. `config.Load` ignores `APP_ENV_PATH`. It always tries `./.env` and then `/app/vault/.env`, while `Ensure` writes to `APP_ENV_PATH`. If these point to different files, generated secrets go to a file that never gets loaded.
 8. The Dockerfile runs `mkdir -p /app/cove`, which isn't used anywhere.
 

@@ -8,10 +8,13 @@ import (
 	"os/signal"
 	"syscall"
 
+	"github.com/LSariol/Cove/internal/bootstrap"
 	"github.com/LSariol/Cove/internal/cli"
 	"github.com/LSariol/Cove/internal/config"
 	"github.com/LSariol/Cove/internal/database"
+	"github.com/LSariol/Cove/internal/encryption"
 	"github.com/LSariol/Cove/internal/server"
+	"github.com/LSariol/Cove/internal/vault"
 )
 
 func main() {
@@ -20,12 +23,14 @@ func main() {
 		panic(err)
 	}
 
+	cfg := config.FromEnv()
+
 	if len(os.Args) > 1 && os.Args[1] == "migrate" {
-		runMigrate(os.Args[2:])
+		runMigrate(cfg, os.Args[2:])
 		return
 	}
 
-	if err := config.Ensure(); err != nil {
+	if err := config.Ensure(cfg); err != nil {
 		panic(err)
 	}
 
@@ -33,13 +38,13 @@ func main() {
 	defer stop()
 
 	// Migrations only run when the migrator connection is configured.
-	if migrateURL := os.Getenv("COVE_MIGRATE_DATABASE_URL"); migrateURL != "" {
-		if err := database.Migrate(ctx, migrateURL); err != nil {
+	if cfg.MigrateDatabaseURL != "" {
+		if err := database.Migrate(ctx, cfg.MigrateDatabaseURL); err != nil {
 			panic(fmt.Sprintf("Migrate DB: %v", err))
 		}
 	}
 
-	db := database.NewDB()
+	db := database.New(cfg.DatabaseURL)
 
 	err := db.Connect(ctx)
 	if err != nil {
@@ -50,8 +55,11 @@ func main() {
 		panic(fmt.Sprintf("Check DB schema: %v", err))
 	}
 
-	srv := server.NewServer(db)
-	cli := cli.NewCLI(db)
+	v := vault.New(db, encryption.NewCipher(cfg.EncryptionKey))
+	marker := bootstrap.NewMarker(cfg.MarkerDir)
+
+	srv := server.New(v, marker, cfg.ClientSecret, cfg.Port)
+	cli := cli.New(v, marker)
 
 	go srv.Start()
 
@@ -62,9 +70,8 @@ func main() {
 }
 
 // runMigrate handles `cove migrate [status|up]` using COVE_MIGRATE_DATABASE_URL.
-func runMigrate(args []string) {
-	migrateURL := os.Getenv("COVE_MIGRATE_DATABASE_URL")
-	if migrateURL == "" {
+func runMigrate(cfg config.Config, args []string) {
+	if cfg.MigrateDatabaseURL == "" {
 		fmt.Fprintln(os.Stderr, "COVE_MIGRATE_DATABASE_URL is not set")
 		os.Exit(1)
 	}
@@ -79,9 +86,9 @@ func runMigrate(args []string) {
 
 	switch command {
 	case "status":
-		err = database.PrintMigrationStatus(ctx, migrateURL, os.Stdout)
+		err = database.PrintMigrationStatus(ctx, cfg.MigrateDatabaseURL, os.Stdout)
 	case "up":
-		err = database.Migrate(ctx, migrateURL)
+		err = database.Migrate(ctx, cfg.MigrateDatabaseURL)
 	default:
 		fmt.Fprintf(os.Stderr, "unknown migrate command %q (use: status, up)\n", command)
 		os.Exit(2)

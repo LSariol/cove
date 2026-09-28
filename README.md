@@ -22,11 +22,13 @@ Secrets are encrypted before being written to the database. Keys are never expos
 ## Architecture
 
 ```
-cmd/cove/main.go          Entry point — loads config, connects DB, starts server and CLI
-internal/config/          Environment loading and secret auto-generation
-internal/server/          HTTP server, routing, middleware, and handlers
-internal/database/        PostgreSQL connection pool and CRUD + event log
-internal/encryption/      AES-256-GCM encrypt/decrypt and secret generation
+cmd/cove/main.go          Entry point — reads config, wires packages together, starts server and CLI
+internal/config/          Every setting, read from the environment once; secret auto-generation
+internal/vault/           The rules for secrets: validation, encryption, and the event log
+internal/database/        PostgreSQL connection pool, SQL queries, and migrations
+internal/encryption/      AES-256-GCM cipher and random secret generation
+internal/bootstrap/       Marker file that locks the bootstrap endpoint
+internal/server/          HTTP API: routing, middleware, and handlers
 internal/cli/             Interactive CLI for managing secrets directly
 ```
 
@@ -73,7 +75,7 @@ Then set `COVE_MIGRATE_DATABASE_URL` (as `cove_migrator`) and start Cove. It cre
 
 2. Copy the example environment file:
    ```bash
-   cp .env.exmaple .env
+   cp .env.example .env
    ```
 
 3. Edit `.env` and fill in your database URL and optionally your secrets. If `COVE_CLIENT_SECRET` or `VAULT_ENCRYPTION_KEY` are left empty, Cove will generate and persist them automatically on first start.
@@ -126,7 +128,7 @@ The included `docker-compose.yml` mounts external volumes for the `.env` file an
 1. Create the host directories and your `.env` file:
    ```bash
    mkdir -p /srv/server/storage/cove/markers
-   cp .env.exmaple /srv/server/storage/cove/.env
+   cp .env.example /srv/server/storage/cove/.env
    # Edit /srv/server/storage/cove/.env with your values
    ```
 

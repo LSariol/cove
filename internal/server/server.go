@@ -1,21 +1,30 @@
+// Package server is Cove's HTTP API.
 package server
 
 import (
 	"fmt"
 	"log"
 	"net/http"
-	"os"
 
-	"github.com/LSariol/Cove/internal/database"
+	"github.com/LSariol/Cove/internal/bootstrap"
+	"github.com/LSariol/Cove/internal/vault"
 )
 
 type Server struct {
-	DB *database.Database
+	vault        *vault.Vault
+	bootstrap    *bootstrap.Marker
+	clientSecret string
+	port         string
 }
 
-func NewServer(db *database.Database) *Server {
+// New returns a Server. clientSecret is the bearer token clients must send, and
+// is also what the bootstrap endpoint hands out.
+func New(v *vault.Vault, marker *bootstrap.Marker, clientSecret string, port string) *Server {
 	return &Server{
-		DB: db,
+		vault:        v,
+		bootstrap:    marker,
+		clientSecret: clientSecret,
+		port:         port,
 	}
 }
 
@@ -25,8 +34,7 @@ func (s *Server) Start() {
 	mux := http.NewServeMux()
 	s.defineRoutes(mux)
 
-	port := os.Getenv("APP_PORT")
-	address := "0.0.0.0:" + port
+	address := "0.0.0.0:" + s.port
 
 	fmt.Printf("Running on %s\n", address)
 

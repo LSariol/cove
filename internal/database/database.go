@@ -1,4 +1,6 @@
-// Package database manages the connection pool and CRUD operations for the Cove Database.
+// Package database manages the connection pool, migrations, and SQL queries for
+// the Cove database. It stores and returns encrypted values only; encryption and
+// the rules around reads and writes live in the vault package.
 package database
 
 import (
@@ -15,15 +17,15 @@ type Database struct {
 	ConnString string
 }
 
-// Creates a new database object
-func NewDB() *Database {
+// New returns a Database for connString. Call Connect before using it.
+func New(connString string) *Database {
 
 	return &Database{
-		ConnString: os.Getenv("COVE_DATABASE_URL"),
+		ConnString: connString,
 	}
 }
 
-// Connect opens a pgxpool connection using environment variables and validlates its a successful connection with Ping
+// Connect opens a pgxpool connection and validates it with Ping
 func (d *Database) Connect(ctx context.Context) error {
 
 	pool, err := pgxpool.New(ctx, d.ConnString)
