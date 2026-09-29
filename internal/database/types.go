@@ -20,6 +20,7 @@ const (
 	EventRead   EventKind = "read"
 	EventUpdate EventKind = "update"
 	EventDelete EventKind = "delete"
+	EventRename EventKind = "rename"
 )
 
 type EventLogInput struct {
@@ -30,4 +31,15 @@ type EventLogInput struct {
 	Source            string
 	OldEncryptedValue *string
 	NewEncryptedValue *string
+	Detail            string // optional context, e.g. "renamed from X"
+}
+
+// Event is a row of cove.event_log, without its encrypted values.
+type Event struct {
+	SecretKey     string
+	SecretVersion int
+	Kind          EventKind
+	Source        string
+	Detail        string
+	OccurredAt    time.Time
 }

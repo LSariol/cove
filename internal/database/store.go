@@ -153,16 +153,136 @@ func (d *Database) LogEvent(ctx context.Context, logInfo EventLogInput) error {
 
 	const query = `
 	INSERT INTO cove.event_log
-	(secret_id, secret_key, secret_version, kind, source, old_encrypted_value, new_encrypted_value)
-	VALUES ($1, $2, $3, $4, $5, $6, $7);
+	(secret_id, secret_key, secret_version, kind, source, old_encrypted_value, new_encrypted_value, detail)
+	VALUES ($1, $2, $3, $4, $5, $6, $7, NULLIF($8, ''));
 	`
 
-	_, err := d.Pool.Exec(ctx, query, logInfo.SecretID, logInfo.SecretKey, logInfo.SecretVersion, logInfo.Kind, logInfo.Source, logInfo.OldEncryptedValue, logInfo.NewEncryptedValue)
+	_, err := d.Pool.Exec(ctx, query, logInfo.SecretID, logInfo.SecretKey, logInfo.SecretVersion, logInfo.Kind, logInfo.Source, logInfo.OldEncryptedValue, logInfo.NewEncryptedValue, logInfo.Detail)
 	if err != nil {
 		return fmt.Errorf("LogEvent: %w", err)
 	}
 
 	return nil
+}
+
+// RenameSecret changes a secret's key and returns the renamed row.
+func (d *Database) RenameSecret(ctx context.Context, oldKey string, newKey string) (Secret, error) {
+	const query = `
+	UPDATE cove.secrets
+	SET key = $2
+	WHERE key = $1
+	RETURNING ` + secretColumns
+
+	s, err := scanSecret(d.Pool.QueryRow(ctx, query, oldKey, newKey))
+	if err != nil {
+		return s, fmt.Errorf("rename secret %q to %q: %w", oldKey, newKey, classify(err))
+	}
+	return s, nil
+}
+
+// eventColumns is the column list scanned by scanEvent, in order.
+const eventColumns = `secret_key, secret_version, kind, source, COALESCE(detail, ''), occurred_at`
+
+// ListEvents returns key's events, newest first. limit <= 0 returns them all.
+func (d *Database) ListEvents(ctx context.Context, key string, limit int) ([]Event, error) {
+	query := `
+	SELECT ` + eventColumns + `
+	FROM cove.event_log
+	WHERE secret_key = $1
+	ORDER BY occurred_at DESC, id DESC`
+	args := []any{key}
+	if limit > 0 {
+		query += ` LIMIT $2`
+		args = append(args, limit)
+	}
+
+	rows, err := d.Pool.Query(ctx, query, args...)
+	if err != nil {
+		return nil, fmt.Errorf("list events for %q: %w", key, err)
+	}
+	defer rows.Close()
+
+	var events []Event
+	for rows.Next() {
+		e, err := scanEvent(rows)
+		if err != nil {
+			return nil, fmt.Errorf("scan event: %w", err)
+		}
+		events = append(events, e)
+	}
+	return events, rows.Err()
+}
+
+// LastEvent returns key's most recent event of the given kind. found is
+// false when there is none.
+func (d *Database) LastEvent(ctx context.Context, key string, kind EventKind) (e Event, found bool, err error) {
+	const query = `
+	SELECT ` + eventColumns + `
+	FROM cove.event_log
+	WHERE secret_key = $1 AND kind = $2
+	ORDER BY occurred_at DESC, id DESC
+	LIMIT 1`
+
+	e, err = scanEvent(d.Pool.QueryRow(ctx, query, key, kind))
+	if errors.Is(err, pgx.ErrNoRows) {
+		return e, false, nil
+	}
+	if err != nil {
+		return e, false, fmt.Errorf("last %s event for %q: %w", kind, key, err)
+	}
+	return e, true, nil
+}
+
+// ValueVersions returns every encrypted value key has had, by version, from
+// the event log: the value written by each create/update, and the last value
+// of a deleted secret. It returns ErrNotFound if key has no history.
+func (d *Database) ValueVersions(ctx context.Context, key string) (map[int]string, error) {
+	const query = `
+	SELECT secret_version, COALESCE(new_encrypted_value, old_encrypted_value)
+	FROM cove.event_log
+	WHERE secret_key = $1
+	  AND ((kind IN ('create', 'update') AND new_encrypted_value IS NOT NULL)
+	    OR (kind = 'delete' AND old_encrypted_value IS NOT NULL))
+	ORDER BY id`
+
+	rows, err := d.Pool.Query(ctx, query, key)
+	if err != nil {
+		return nil, fmt.Errorf("value history for %q: %w", key, err)
+	}
+	defer rows.Close()
+
+	versions := make(map[int]string)
+	for rows.Next() {
+		var version int
+		var value string
+		if err := rows.Scan(&version, &value); err != nil {
+			return nil, fmt.Errorf("scan value history: %w", err)
+		}
+		versions[version] = value
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+
+	if len(versions) == 0 {
+		return nil, fmt.Errorf("value history for %q: %w", key, ErrNotFound)
+	}
+	return versions, nil
+}
+
+// CountSecrets returns how many secrets the vault holds.
+func (d *Database) CountSecrets(ctx context.Context) (int, error) {
+	var n int
+	if err := d.Pool.QueryRow(ctx, `SELECT count(*) FROM cove.secrets`).Scan(&n); err != nil {
+		return 0, fmt.Errorf("count secrets: %w", err)
+	}
+	return n, nil
+}
+
+func scanEvent(row pgx.Row) (Event, error) {
+	var e Event
+	err := row.Scan(&e.SecretKey, &e.SecretVersion, &e.Kind, &e.Source, &e.Detail, &e.OccurredAt)
+	return e, err
 }
 
 func scanSecret(row pgx.Row) (Secret, error) {
