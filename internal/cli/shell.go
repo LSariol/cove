@@ -28,6 +28,10 @@ type Options struct {
 	// Env is the environment shown in the prompt, e.g. "dev" or "prod"
 	// (APP_ENV). Production is shown in red.
 	Env string
+
+	// Version and DB are reported by `status`.
+	Version string
+	DB      StatusSource
 }
 
 type CLI struct {
@@ -35,6 +39,9 @@ type CLI struct {
 	bootstrap *bootstrap.Marker
 	embedded  bool
 	prompt    string
+	env       string
+	version   string
+	db        StatusSource
 
 	// scanner reads stdin for both the prompt and follow-up questions such as
 	// delete confirmations, so no input is lost between two readers. When the
@@ -55,6 +62,9 @@ func New(v *vault.Vault, marker *bootstrap.Marker, opts Options) *CLI {
 		bootstrap: marker,
 		embedded:  opts.Embedded,
 		prompt:    promptFor(opts.Env),
+		env:       opts.Env,
+		version:   opts.Version,
+		db:        opts.DB,
 		scanner:   bufio.NewScanner(os.Stdin),
 		commands:  commandTable(opts.Embedded),
 		byName:    make(map[string]*command),

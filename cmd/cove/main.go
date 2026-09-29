@@ -108,7 +108,7 @@ func runServer(withShell bool) {
 		// When stdin closes (no terminal attached) the CLI simply returns and
 		// the API keeps serving; `exit`, Ctrl+C and `docker stop` all cancel
 		// ctx, which stops the server gracefully.
-		shell := cli.New(v, marker, cli.Options{Embedded: true, Env: cfg.Env})
+		shell := cli.New(v, marker, cli.Options{Embedded: true, Env: cfg.Env, Version: buildVersion(), DB: db})
 		go shell.Run(ctx, stop)
 	}
 
@@ -171,7 +171,7 @@ func openClient(ctx context.Context) (*database.Database, *cli.CLI) {
 
 	db := connect(ctx, cfg)
 	v := vault.New(db, encryption.NewCipher(cfg.EncryptionKey))
-	return db, cli.New(v, bootstrap.NewMarker(cfg.MarkerDir), cli.Options{Env: cfg.Env})
+	return db, cli.New(v, bootstrap.NewMarker(cfg.MarkerDir), cli.Options{Env: cfg.Env, Version: buildVersion(), DB: db})
 }
 
 // connect opens the database and confirms its schema matches this build.

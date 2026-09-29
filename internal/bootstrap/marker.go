@@ -55,6 +55,19 @@ func (m *Marker) Clear() error {
 	return nil
 }
 
+// Locked reports whether the marker exists, i.e. the bootstrap endpoint is
+// closed.
+func (m *Marker) Locked() (bool, error) {
+	_, err := os.Stat(m.path())
+	if err == nil {
+		return true, nil
+	}
+	if errors.Is(err, fs.ErrNotExist) {
+		return false, nil
+	}
+	return false, err
+}
+
 func (m *Marker) path() string {
 	return filepath.Join(m.dir, markerName)
 }

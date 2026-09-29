@@ -122,6 +122,11 @@ func commandTable(embedded bool) []command {
 			complete: (*CLI).keyNames,
 		},
 		{
+			names:  []string{"status"},
+			usages: []usage{{help: "Shows whether Cove is healthy: version, environment, database, schema,\n      number of secrets, and whether the bootstrap endpoint is open."}},
+			run:    (*CLI).status,
+		},
+		{
 			names:  []string{"search", "s"},
 			usages: []usage{{forms: []string{"<text>"}, help: "Lists secrets whose keys contain <text> (not case-sensitive)."}},
 			run:    (*CLI).search,
