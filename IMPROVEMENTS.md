@@ -190,6 +190,8 @@ Instead of handing out the master token, bootstrap would hand out a token that b
 > - **Output:** follow clig.dev / `gh` conventions: symbols + meaningful color only, no output prefix, color off when not a terminal or `NO_COLOR` is set, data to stdout and messages to stderr, exit codes, consistent messages.
 > - **Libraries:** no cobra/urfave. Use `golang.org/x/term` for the interactive shell (history, arrow keys, tab completion of commands and keys), falling back to plain line reading when stdin isn't a terminal.
 > - **Hidden value input:** not now.
+> - **Prompt shows the environment** from `APP_ENV`: `cove (dev)>`, and `cove (prod)>` in red.
+> - **Tab completion** of command names and secret keys, plus history and line editing, via `golang.org/x/term`.
 
 ### Background: attach vs. exec
 
