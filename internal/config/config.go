@@ -26,6 +26,10 @@ type Config struct {
 
 const defaultMarkerDir = "/app/vault/markers"
 
+// minSecretLength is the shortest COVE_CLIENT_SECRET / VAULT_ENCRYPTION_KEY
+// accepted. Generated values are 32 and 45 characters.
+const minSecretLength = 24
+
 // envFiles are tried in order by Load, after APP_ENV_PATH; the first one that
 // exists is loaded.
 var envFiles = []string{".env", "/app/vault/.env"}
@@ -82,6 +86,29 @@ func fromEnv(envFile string) Config {
 	}
 
 	return cfg
+}
+
+// Validate returns an error for settings Cove must not run with. Call it after
+// Ensure, which fills in missing secrets.
+func (c Config) Validate() error {
+	if len(c.ClientSecret) < minSecretLength {
+		return fmt.Errorf("COVE_CLIENT_SECRET is too short (%d characters, need at least %d). "+
+			"Leave it empty to have Cove generate one, then update your clients", len(c.ClientSecret), minSecretLength)
+	}
+	return nil
+}
+
+// Warnings returns problems that are risky but shouldn't stop Cove. A short
+// VAULT_ENCRYPTION_KEY is only a warning: refusing to start would lock an
+// existing vault out of its own data, and the key can't be changed without
+// re-encrypting every secret.
+func (c Config) Warnings() []string {
+	var warnings []string
+	if len(c.EncryptionKey) < minSecretLength {
+		warnings = append(warnings, fmt.Sprintf("VAULT_ENCRYPTION_KEY is only %d characters; a key this short is guessable. "+
+			"For a new vault, leave it empty so Cove generates one. For an existing vault, don't change it until key rotation exists", len(c.EncryptionKey)))
+	}
+	return warnings
 }
 
 // Store a new key value pair into the .env file

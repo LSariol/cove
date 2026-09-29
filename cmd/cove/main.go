@@ -34,6 +34,13 @@ func main() {
 		fatal(err)
 	}
 
+	if err := cfg.Validate(); err != nil {
+		fatal(err)
+	}
+	for _, warning := range cfg.Warnings() {
+		log.Printf("warning: %s", warning)
+	}
+
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer stop()
 

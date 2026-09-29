@@ -165,3 +165,29 @@ func TestEnsureExplainsReadOnlyEnvFile(t *testing.T) {
 		}
 	}
 }
+
+func TestValidateRejectsShortClientSecret(t *testing.T) {
+	for _, secret := range []string{"Kept Empty", "short", strings.Repeat("x", minSecretLength-1)} {
+		if err := (Config{ClientSecret: secret}).Validate(); err == nil {
+			t.Errorf("Validate accepted client secret %q", secret)
+		}
+	}
+	if err := (Config{ClientSecret: strings.Repeat("x", 32)}).Validate(); err != nil {
+		t.Errorf("Validate rejected a 32-character client secret: %v", err)
+	}
+}
+
+func TestShortEncryptionKeyIsOnlyAWarning(t *testing.T) {
+	cfg := Config{ClientSecret: strings.Repeat("x", 32), EncryptionKey: "Kept Empty"}
+	if err := cfg.Validate(); err != nil {
+		t.Fatalf("a short encryption key must not stop Cove: %v", err)
+	}
+	if len(cfg.Warnings()) != 1 {
+		t.Fatalf("Warnings = %v, want one warning", cfg.Warnings())
+	}
+
+	cfg.EncryptionKey = strings.Repeat("k", 45)
+	if len(cfg.Warnings()) != 0 {
+		t.Fatalf("Warnings = %v for a 45-character key", cfg.Warnings())
+	}
+}
