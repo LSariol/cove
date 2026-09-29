@@ -115,6 +115,35 @@ func (v *Vault) Get(ctx context.Context, key string, source string) (Secret, err
 	return secret, nil
 }
 
+// Show returns a secret with its decrypted value, like Get, but doesn't count
+// as a read: read_count tracks how often apps pull a secret, and a person
+// checking it in the CLI shouldn't change that. It's still logged as a read.
+func (v *Vault) Show(ctx context.Context, key string, source string) (Secret, error) {
+	s, err := v.store.GetSecret(ctx, key)
+	if err != nil {
+		return Secret{}, err
+	}
+
+	value, err := v.cipher.Decrypt(s.EncryptedValue)
+	if err != nil {
+		return Secret{}, fmt.Errorf("get secret %q: %w (%v)", key, ErrDecrypt, err)
+	}
+
+	_ = v.store.LogEvent(ctx, database.EventLogInput{
+		SecretID:          s.ID,
+		SecretKey:         s.Key,
+		SecretVersion:     s.Version,
+		Kind:              database.EventRead,
+		Source:            source,
+		OldEncryptedValue: &s.EncryptedValue,
+		NewEncryptedValue: nil,
+	})
+
+	secret := fromRow(s)
+	secret.Value = value
+	return secret, nil
+}
+
 // List returns every secret without values, ordered by key.
 func (v *Vault) List(ctx context.Context) ([]Secret, error) {
 	rows, err := v.store.ListSecrets(ctx)

@@ -174,3 +174,27 @@ func TestErrorKinds(t *testing.T) {
 		t.Errorf("Get with the wrong vault key = %v, want ErrDecrypt", err)
 	}
 }
+
+func TestShowDoesNotCountAsARead(t *testing.T) {
+	ctx := context.Background()
+	v, store := newVault(t)
+	_ = v.Create(ctx, "app.key", "one", "test")
+
+	got, err := v.Show(ctx, "app.key", "cove_cli")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got.Value != "one" || got.ReadCount != 0 {
+		t.Fatalf("Show = %+v, want value one and read count 0", got)
+	}
+
+	last := store.Events[len(store.Events)-1]
+	if last.Kind != database.EventRead || last.Source != "cove_cli" {
+		t.Fatalf("Show wasn't logged as a read: %+v", last)
+	}
+
+	// Get (used by the API) still counts.
+	if got, _ := v.Get(ctx, "app.key", "myapp"); got.ReadCount != 1 {
+		t.Fatalf("Get read count = %d, want 1", got.ReadCount)
+	}
+}

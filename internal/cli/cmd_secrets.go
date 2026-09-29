@@ -16,7 +16,7 @@ func (c *CLI) get(ctx context.Context, args []string) error {
 	}
 	key := args[1]
 
-	secret, err := c.vault.Get(ctx, key, source)
+	secret, err := c.vault.Show(ctx, key, source)
 	if err != nil {
 		return secretError("get", key, err)
 	}
