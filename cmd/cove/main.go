@@ -65,7 +65,7 @@ func main() {
 	v := vault.New(db, encryption.NewCipher(cfg.EncryptionKey))
 	marker := bootstrap.NewMarker(cfg.MarkerDir)
 
-	srv := server.New(v, marker, cfg.ClientSecret, cfg.Port)
+	srv := server.New(v, marker, db, cfg.ClientSecret, cfg.Port)
 	cli := cli.New(v, marker)
 
 	go srv.Start()

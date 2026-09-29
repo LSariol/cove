@@ -45,6 +45,13 @@ func (d *Database) Connect(ctx context.Context) error {
 	return nil
 }
 
+// Ping checks that the database is reachable, giving up after 2 seconds.
+func (d *Database) Ping(ctx context.Context) error {
+	ctx, cancel := context.WithTimeout(ctx, 2*time.Second)
+	defer cancel()
+	return d.Pool.Ping(ctx)
+}
+
 // Close closes a pgxpool connection.
 func (d *Database) Close() {
 	if d.Pool != nil {

@@ -26,7 +26,7 @@ type testAPI struct {
 func newTestAPI(t *testing.T) *testAPI {
 	t.Helper()
 	v := vault.New(vaulttest.NewStore(), encryption.NewCipher("test-vault-key"))
-	s := New(v, bootstrap.NewMarker(t.TempDir()), testToken, "0")
+	s := New(v, bootstrap.NewMarker(t.TempDir()), &fakePinger{}, testToken, "0")
 
 	mux := http.NewServeMux()
 	s.defineRoutes(mux)

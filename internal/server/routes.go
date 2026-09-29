@@ -6,6 +6,7 @@ func (s *Server) defineRoutes(mux *http.ServeMux) {
 
 	// Unauthenticated routes
 	mux.HandleFunc("/v0/health", s.healthHandler)
+	mux.HandleFunc("/v0/ready", s.readyHandler)
 	mux.HandleFunc("/v0/bootstrap/lighthouse", s.bootstrapHandler)
 
 	// Authenticated routes

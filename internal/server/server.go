@@ -2,6 +2,7 @@
 package server
 
 import (
+	"context"
 	"fmt"
 	"log"
 	"net/http"
@@ -11,19 +12,27 @@ import (
 	"github.com/LSariol/Cove/internal/vault"
 )
 
+// Pinger checks that the database is reachable. *database.Database implements it.
+type Pinger interface {
+	Ping(ctx context.Context) error
+}
+
 type Server struct {
 	vault        *vault.Vault
 	bootstrap    *bootstrap.Marker
+	db           Pinger
 	clientSecret string
 	port         string
 }
 
-// New returns a Server. clientSecret is the bearer token clients must send, and
-// is also what the bootstrap endpoint hands out.
-func New(v *vault.Vault, marker *bootstrap.Marker, clientSecret string, port string) *Server {
+// New returns a Server. db is used by the readiness check. clientSecret is the
+// bearer token clients must send, and is also what the bootstrap endpoint
+// hands out.
+func New(v *vault.Vault, marker *bootstrap.Marker, db Pinger, clientSecret string, port string) *Server {
 	return &Server{
 		vault:        v,
 		bootstrap:    marker,
+		db:           db,
 		clientSecret: clientSecret,
 		port:         port,
 	}
