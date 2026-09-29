@@ -17,24 +17,31 @@ type Pinger interface {
 	Ping(ctx context.Context) error
 }
 
+// Options are the Server's settings.
+type Options struct {
+	ClientSecret string // bearer token clients must send; also what the bootstrap endpoint hands out
+	Port         string
+	Version      string // reported by /v0/version
+}
+
 type Server struct {
 	vault        *vault.Vault
 	bootstrap    *bootstrap.Marker
 	db           Pinger
 	clientSecret string
 	port         string
+	version      string
 }
 
-// New returns a Server. db is used by the readiness check. clientSecret is the
-// bearer token clients must send, and is also what the bootstrap endpoint
-// hands out.
-func New(v *vault.Vault, marker *bootstrap.Marker, db Pinger, clientSecret string, port string) *Server {
+// New returns a Server. db is used by the readiness check.
+func New(v *vault.Vault, marker *bootstrap.Marker, db Pinger, opts Options) *Server {
 	return &Server{
 		vault:        v,
 		bootstrap:    marker,
 		db:           db,
-		clientSecret: clientSecret,
-		port:         port,
+		clientSecret: opts.ClientSecret,
+		port:         opts.Port,
+		version:      opts.Version,
 	}
 }
 

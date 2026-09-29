@@ -3,7 +3,7 @@ package server
 import "testing"
 
 func TestHTTPServerHasTimeouts(t *testing.T) {
-	srv := New(nil, nil, &fakePinger{}, testToken, "2100").httpServer()
+	srv := New(nil, nil, &fakePinger{}, Options{ClientSecret: testToken, Port: "2100"}).httpServer()
 
 	if srv.Addr != "0.0.0.0:2100" {
 		t.Errorf("Addr = %q", srv.Addr)

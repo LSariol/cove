@@ -2,9 +2,11 @@ name: cove
 
 services:
   cove:
-    build:                      
+    build:
       context: .
       dockerfile: Dockerfile
+      args:
+        VERSION: ${COVE_VERSION:-dev}   # e.g. COVE_VERSION=$(git describe --tags --always)
     environment:
       - APP_ENV=PROD
       - APP_PORT=2100

@@ -6,6 +6,7 @@ import (
 	"log"
 	"os"
 	"os/signal"
+	"runtime/debug"
 	"syscall"
 
 	"github.com/LSariol/Cove/internal/bootstrap"
@@ -17,7 +18,17 @@ import (
 	"github.com/LSariol/Cove/internal/vault"
 )
 
+// version is set at build time:
+//
+//	go build -ldflags "-X main.version=v1.0.0" ./cmd/cove
+var version = "dev"
+
 func main() {
+
+	if len(os.Args) > 1 && os.Args[1] == "version" {
+		fmt.Println(buildVersion())
+		return
+	}
 
 	cfg, err := config.Load()
 	if err != nil {
@@ -40,6 +51,8 @@ func main() {
 	for _, warning := range cfg.Warnings() {
 		log.Printf("warning: %s", warning)
 	}
+
+	log.Printf("Cove %s", buildVersion())
 
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer stop()
@@ -65,7 +78,11 @@ func main() {
 	v := vault.New(db, encryption.NewCipher(cfg.EncryptionKey))
 	marker := bootstrap.NewMarker(cfg.MarkerDir)
 
-	srv := server.New(v, marker, db, cfg.ClientSecret, cfg.Port)
+	srv := server.New(v, marker, db, server.Options{
+		ClientSecret: cfg.ClientSecret,
+		Port:         cfg.Port,
+		Version:      buildVersion(),
+	})
 	cli := cli.New(v, marker)
 
 	go srv.Start()
@@ -74,6 +91,23 @@ func main() {
 
 	<-ctx.Done()
 	log.Println("Shutting Down...")
+}
+
+// buildVersion returns version, or for an unstamped local build, "dev" plus the
+// git commit it was built from when Go recorded one.
+func buildVersion() string {
+	if version != "dev" {
+		return version
+	}
+
+	if info, ok := debug.ReadBuildInfo(); ok {
+		for _, setting := range info.Settings {
+			if setting.Key == "vcs.revision" && len(setting.Value) >= 7 {
+				return "dev-" + setting.Value[:7]
+			}
+		}
+	}
+	return version
 }
 
 // runMigrate handles `cove migrate [status|up]` using COVE_MIGRATE_DATABASE_URL.

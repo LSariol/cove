@@ -35,6 +35,16 @@ func (s *Server) readyHandler(w http.ResponseWriter, r *http.Request) {
 	})
 }
 
+// versionHandler reports which Cove build is running. It requires auth so the
+// version isn't advertised to anyone who can reach the port.
+func (s *Server) versionHandler(w http.ResponseWriter, r *http.Request) {
+	writeResponse(w, http.StatusOK, struct {
+		Version string `json:"version"`
+	}{
+		Version: s.version,
+	})
+}
+
 func (s *Server) authHandler(w http.ResponseWriter, r *http.Request) {
 	writeResponse(w, http.StatusOK, struct {
 		Authenticated bool   `json:"authenticated"`

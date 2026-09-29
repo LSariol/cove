@@ -2,7 +2,9 @@
 FROM golang:1.25.1-alpine AS builder
 WORKDIR /app
 COPY . .
-RUN go build -o cove ./cmd/cove
+# Set with: COVE_VERSION=$(git describe --tags --always) docker compose up -d --build
+ARG VERSION=dev
+RUN go build -ldflags "-X main.version=${VERSION}" -o cove ./cmd/cove
 
 # -- Final --
 FROM alpine:latest

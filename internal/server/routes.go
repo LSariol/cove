@@ -13,4 +13,5 @@ func (s *Server) defineRoutes(mux *http.ServeMux) {
 	mux.Handle("/v0/secrets", s.requireClientSecret(http.HandlerFunc(s.handleSecretsCollection)))
 	mux.Handle("/v0/secrets/", s.requireClientSecret(http.HandlerFunc(s.handleSecretID)))
 	mux.Handle("/v0/auth", s.requireClientSecret(http.HandlerFunc(s.authHandler)))
+	mux.Handle("/v0/version", s.requireClientSecret(http.HandlerFunc(s.versionHandler)))
 }
