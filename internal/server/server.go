@@ -86,7 +86,7 @@ func (s *Server) httpServer() *http.Server {
 
 	return &http.Server{
 		Addr:              "0.0.0.0:" + s.port,
-		Handler:           mux,
+		Handler:           logRequests(mux),
 		ReadHeaderTimeout: 5 * time.Second,
 		ReadTimeout:       15 * time.Second,
 		WriteTimeout:      15 * time.Second,

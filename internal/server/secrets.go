@@ -138,8 +138,6 @@ func (s *Server) postSecret(w http.ResponseWriter, r *http.Request, key string, 
 		Action:  "created",
 		Message: fmt.Sprintf("%s has been created.", key),
 	})
-
-	log.Printf("created %q (source %q)", key, source)
 }
 
 func (s *Server) patchSecret(w http.ResponseWriter, r *http.Request, key string, source string) {
@@ -168,8 +166,6 @@ func (s *Server) patchSecret(w http.ResponseWriter, r *http.Request, key string,
 		Action:  "updated",
 		Message: fmt.Sprintf("%s has been updated.", key),
 	})
-
-	log.Printf("updated %q (source %q)", key, source)
 }
 
 func (s *Server) deleteSecret(w http.ResponseWriter, r *http.Request, key string, source string) {
@@ -188,6 +184,4 @@ func (s *Server) deleteSecret(w http.ResponseWriter, r *http.Request, key string
 		Action:  "deleted",
 		Message: fmt.Sprintf("%s has been deleted.", key),
 	})
-
-	log.Printf("deleted %q (source %q)", key, source)
 }
