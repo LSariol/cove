@@ -111,13 +111,39 @@ func (c Config) Warnings() []string {
 	return warnings
 }
 
-// Store a new key value pair into the .env file
-func Store(file string, key string, value string) error {
+// Store sets key in the .env file at path, keeping its other values. The file
+// holds the vault key, so it is left readable by its owner only (0600). A file
+// that exists but can't be parsed is not overwritten.
+func Store(path string, key string, value string) error {
 
-	envs, _ := godotenv.Read(file)
+	envs, err := godotenv.Read(path)
+	if err != nil && !errors.Is(err, fs.ErrNotExist) {
+		return fmt.Errorf("read %s: %w", path, err)
+	}
+	if envs == nil {
+		envs = make(map[string]string)
+	}
 	envs[key] = value
 
-	return godotenv.Write(envs, file)
+	content, err := godotenv.Marshal(envs)
+	if err != nil {
+		return err
+	}
+
+	f, err := os.OpenFile(path, os.O_WRONLY|os.O_CREATE|os.O_TRUNC, 0o600)
+	if err != nil {
+		return err
+	}
+	if _, err := f.WriteString(content + "\n"); err != nil {
+		f.Close()
+		return err
+	}
+	if err := f.Close(); err != nil {
+		return err
+	}
+
+	// OpenFile's mode only applies to new files; tighten an existing one too.
+	return os.Chmod(path, 0o600)
 }
 
 // Ensure makes sure COVE_CLIENT_SECRET and VAULT_ENCRYPTION_KEY are set. Any
