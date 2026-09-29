@@ -38,7 +38,8 @@ func (e usageError) Error() string {
 	return e.reason + " Usage: " + e.form
 }
 
-// commandTable lists every command in the order `help` shows them. Adding a
+// commandTable lists every command in the order `help` shows them: reading
+// and writing secrets, then finding and inspecting them, then admin. Adding a
 // command here makes it available at the prompt and in the help text.
 func commandTable(embedded bool) []command {
 	exitHelp := "Leaves the shell."
@@ -47,11 +48,6 @@ func commandTable(embedded bool) []command {
 	}
 
 	return []command{
-		{
-			names:  []string{"exit", "quit"},
-			usages: []usage{{help: exitHelp}},
-			run:    (*CLI).exit,
-		},
 		{
 			names:    []string{"get", "g"},
 			usages:   []usage{{forms: []string{"<key>"}, help: "Shows the decrypted value of a secret."}},
@@ -64,24 +60,10 @@ func commandTable(embedded bool) []command {
 			run:    (*CLI).create,
 		},
 		{
-			names:    []string{"delete", "d"},
-			usages:   []usage{{forms: []string{"<key> [--yes]"}, help: "Deletes a secret. Asks for confirmation unless --yes is given."}},
-			run:      (*CLI).delete,
-			complete: (*CLI).keyNames,
-		},
-		{
 			names:    []string{"update", "u"},
 			usages:   []usage{{forms: []string{"<key> <value>"}, help: "Replaces a secret's value and increases its version."}},
 			run:      (*CLI).update,
 			complete: (*CLI).keyNames,
-		},
-		{
-			names: []string{"list", "l"},
-			usages: []usage{
-				{help: "Lists every secret's name and details. Values are never shown."},
-				{forms: []string{"<prefix>"}, help: "Lists secrets whose keys start with <prefix>."},
-			},
-			run: (*CLI).list,
 		},
 		{
 			names: []string{"generate"},
@@ -91,6 +73,12 @@ func commandTable(embedded bool) []command {
 					"      unless given) and shows it. If the key exists, asks before replacing its value.",
 			}},
 			run:      (*CLI).generate,
+			complete: (*CLI).keyNames,
+		},
+		{
+			names:    []string{"delete", "d"},
+			usages:   []usage{{forms: []string{"<key> [--yes]"}, help: "Deletes a secret. Asks for confirmation unless --yes is given."}},
+			run:      (*CLI).delete,
 			complete: (*CLI).keyNames,
 		},
 		{
@@ -110,6 +98,19 @@ func commandTable(embedded bool) []command {
 			complete: (*CLI).keyNames,
 		},
 		{
+			names: []string{"list", "l"},
+			usages: []usage{
+				{help: "Lists every secret's name and details. Values are never shown."},
+				{forms: []string{"<prefix>"}, help: "Lists secrets whose keys start with <prefix>."},
+			},
+			run: (*CLI).list,
+		},
+		{
+			names:  []string{"search", "s"},
+			usages: []usage{{forms: []string{"<text>"}, help: "Lists secrets whose keys contain <text> (not case-sensitive)."}},
+			run:    (*CLI).search,
+		},
+		{
 			names:    []string{"info", "i"},
 			usages:   []usage{{forms: []string{"<key>"}, help: "Shows a secret's details and when it was last read. Never shows the value."}},
 			run:      (*CLI).info,
@@ -127,11 +128,6 @@ func commandTable(embedded bool) []command {
 			run:    (*CLI).status,
 		},
 		{
-			names:  []string{"search", "s"},
-			usages: []usage{{forms: []string{"<text>"}, help: "Lists secrets whose keys contain <text> (not case-sensitive)."}},
-			run:    (*CLI).search,
-		},
-		{
 			names: []string{"bootstrap", "b"},
 			usages: []usage{
 				{forms: []string{"clear"}, help: "Opens the one-time bootstrap endpoint, so a new client (e.g. Lighthouse)\n" +
@@ -146,6 +142,11 @@ func commandTable(embedded bool) []command {
 			usages:   []usage{{forms: []string{"[command]"}, help: "Shows every command, or just one."}},
 			run:      (*CLI).help,
 			complete: (*CLI).commandNames,
+		},
+		{
+			names:  []string{"exit", "quit"},
+			usages: []usage{{help: exitHelp}},
+			run:    (*CLI).exit,
 		},
 	}
 }
