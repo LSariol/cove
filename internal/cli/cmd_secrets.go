@@ -2,6 +2,7 @@ package cli
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"strings"
 	"time"
@@ -11,51 +12,48 @@ import (
 
 func (c *CLI) get(ctx context.Context, args []string) {
 	if len(args) != 2 {
-		warningLog("Get requires 1 additional argument.")
-		infoLog("get <secret>")
+		usageLog("get <key>")
 		return
 	}
+	key := args[1]
 
-	res, err := c.vault.Get(ctx, args[1], source)
+	secret, err := c.vault.Get(ctx, key, source)
 	if err != nil {
-		errorLog(fmt.Sprintf("error getting %q: %v", args[1], err))
+		errorLog(secretError("get", key, err))
 		return
 	}
 
-	successLog(fmt.Sprintf("%s : %s\n", res.Key, res.Value))
+	successLog(fmt.Sprintf("%s: %s\n", secret.Key, secret.Value))
 }
 
 func (c *CLI) create(ctx context.Context, args []string) {
 	if len(args) != 3 {
-		warningLog("Create requires 2 additional arguments.")
-		infoLog("create <secretName> <value>")
+		usageLog("create <key> <value>")
 		return
 	}
-
 	key := args[1]
 	value := args[2]
 
 	if err := c.vault.Create(ctx, key, value, source); err != nil {
-		errorLog(err.Error())
+		errorLog(secretError("create", key, err))
 		return
 	}
 
-	successLog(fmt.Sprintf("%s has been created and stored.\n", key))
+	successLog(fmt.Sprintf("Created %q.\n", key))
 }
 
 func (c *CLI) delete(ctx context.Context, args []string) {
 	if len(args) != 2 {
-		warningLog("Delete requires 1 additional argument.")
-		infoLog("delete <secretName>")
+		usageLog("delete <key>")
 		return
 	}
+	key := args[1]
 
-	secretName := args[1]
-	warningLog(fmt.Sprintf("Are you sure you want to delete %q (y/N)", secretName))
+	warningLog(fmt.Sprintf("Delete %q? (y/N)", key))
 	fmt.Print("Cove CLI> ")
 
 	if !c.scanner.Scan() {
-		warningLog("Delete Cancelled")
+		infoLog("Delete cancelled.")
 		return
 	}
 
@@ -66,30 +64,33 @@ func (c *CLI) delete(ctx context.Context, args []string) {
 		return
 	}
 
-	if err := c.vault.Delete(ctx, secretName, source); err != nil {
-		errorLog(err.Error())
+	if err := c.vault.Delete(ctx, key, source); err != nil {
+		errorLog(secretError("delete", key, err))
 		return
 	}
 
-	successLog("Secret has been removed\n")
+	successLog(fmt.Sprintf("Deleted %q.\n", key))
 }
 
 func (c *CLI) update(ctx context.Context, args []string) {
 	if len(args) != 3 {
-		warningLog("Update requires 2 additional arguments.")
-		infoLog("update <secretName> <newValue>")
+		usageLog("update <key> <value>")
 		return
 	}
-
 	key := args[1]
 	value := args[2]
 
-	if err := c.vault.Update(ctx, key, value, source); err != nil {
-		errorLog(err.Error())
+	updated, err := c.vault.Update(ctx, key, value, source)
+	if errors.Is(err, vault.ErrNotFound) {
+		errorLog(fmt.Sprintf("No secret named %q. Use \"create\" to add it.", key))
+		return
+	}
+	if err != nil {
+		errorLog(secretError("update", key, err))
 		return
 	}
 
-	successLog("Secret has been updated.\n")
+	successLog(fmt.Sprintf("Updated %q (now version %d).\n", key, updated.Version))
 }
 
 func (c *CLI) list(ctx context.Context, args []string) {
@@ -103,12 +104,26 @@ func (c *CLI) list(ctx context.Context, args []string) {
 		if mode == "fuzzy" || mode == "f" {
 			c.printSecrets(ctx, args[1], "fuzzy")
 		} else {
-			warningLog("List third argument must be 'fuzzy' or 'f'.")
-			infoLog("list [term] [fuzzy|f]")
+			warningLog(fmt.Sprintf("Unknown list option %q.", args[2]))
+			usageLog("list [prefix]  or  list <text> fuzzy")
 		}
 	default:
-		warningLog("List takes at most 2 additional arguments.")
-		infoLog("list [term] [fuzzy|f]")
+		usageLog("list [prefix]  or  list <text> fuzzy")
+	}
+}
+
+// secretError turns an error from the vault into a message for the prompt.
+// action is what was being attempted, e.g. "create".
+func secretError(action string, key string, err error) string {
+	switch {
+	case errors.Is(err, vault.ErrNotFound):
+		return fmt.Sprintf("No secret named %q.", key)
+	case errors.Is(err, vault.ErrAlreadyExists):
+		return fmt.Sprintf("A secret named %q already exists. Use \"update\" to change its value.", key)
+	case errors.Is(err, vault.ErrDecrypt):
+		return fmt.Sprintf("Couldn't decrypt %q. VAULT_ENCRYPTION_KEY may have changed since it was stored.", key)
+	default:
+		return fmt.Sprintf("Couldn't %s %q: %v", action, key, err)
 	}
 }
 
@@ -118,7 +133,7 @@ func (c *CLI) printSecrets(ctx context.Context, term string, mode string) {
 
 	secrets, err := c.vault.List(ctx)
 	if err != nil {
-		errorLog(fmt.Sprintf("list secrets: %v", err))
+		errorLog(fmt.Sprintf("Couldn't list secrets: %v", err))
 		return
 	}
 
@@ -144,7 +159,11 @@ func (c *CLI) printSecrets(ctx context.Context, term string, mode string) {
 	}
 
 	if len(matched) == 0 {
-		infoLog("No secrets matched your query.")
+		if mode == "all" {
+			infoLog("The vault is empty.")
+		} else {
+			infoLog(fmt.Sprintf("No secrets match %q.", term))
+		}
 		return
 	}
 

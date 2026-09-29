@@ -27,50 +27,50 @@ func commandTable() []command {
 	return []command{
 		{
 			names:  []string{"exit", "quit"},
-			usages: []usage{{help: "Shuts down the program."}},
+			usages: []usage{{help: "Stops Cove, including the API server."}},
 			run:    (*CLI).exit,
 		},
 		{
 			names:  []string{"get", "g"},
-			usages: []usage{{forms: []string{"<secret>"}, help: "Displays the value of the specified secret."}},
+			usages: []usage{{forms: []string{"<key>"}, help: "Shows the decrypted value of a secret."}},
 			run:    (*CLI).get,
 		},
 		{
 			names:  []string{"create", "c"},
-			usages: []usage{{forms: []string{"<secret> <value>"}, help: "Creates a new secret and value to the vault."}},
+			usages: []usage{{forms: []string{"<key> <value>"}, help: "Creates a new secret."}},
 			run:    (*CLI).create,
 		},
 		{
 			names:  []string{"delete", "d"},
-			usages: []usage{{forms: []string{"<secret>"}, help: "Removes the specified secret from the vault."}},
+			usages: []usage{{forms: []string{"<key>"}, help: "Deletes a secret (asks for confirmation)."}},
 			run:    (*CLI).delete,
 		},
 		{
 			names:  []string{"update", "u"},
-			usages: []usage{{forms: []string{"<secret> <new_value>"}, help: "Updates an existing secret in the vault."}},
+			usages: []usage{{forms: []string{"<key> <value>"}, help: "Replaces a secret's value and increases its version."}},
 			run:    (*CLI).update,
 		},
 		{
 			names: []string{"list", "l"},
 			usages: []usage{
-				{help: "Lists all secrets in the public vault."},
-				{forms: []string{"<term>"}, help: "Lists secrets whose keys start with <term>."},
-				{forms: []string{"<term> fuzzy", "<term> f"}, help: "Lists secrets containing <term> (substring match)."},
+				{help: "Lists every secret's name and details. Values are never shown."},
+				{forms: []string{"<prefix>"}, help: "Lists secrets whose keys start with <prefix>."},
+				{forms: []string{"<text> fuzzy", "<text> f"}, help: "Lists secrets whose keys contain <text>."},
 			},
 			run: (*CLI).list,
 		},
 		{
 			names: []string{"bootstrap", "b"},
-			usages: []usage{{
-				forms: []string{"<clear|lock>"},
-				help: "Enters or exits bootstrapping mode. This allows Lighthouse to obtain a\n" +
-					"      one-time-use password without authenticating first.",
-			}},
+			usages: []usage{
+				{forms: []string{"clear"}, help: "Opens the one-time bootstrap endpoint, so a new client (e.g. Lighthouse)\n" +
+					"      can fetch the client token without credentials. It locks again after one use."},
+				{forms: []string{"lock"}, help: "Locks the bootstrap endpoint without it being used."},
+			},
 			run: (*CLI).bootstrapCmd,
 		},
 		{
 			names:  []string{"help", "h"},
-			usages: []usage{{help: "Displays this help information."}},
+			usages: []usage{{help: "Shows this help."}},
 			run:    (*CLI).help,
 		},
 	}

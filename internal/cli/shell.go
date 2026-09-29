@@ -63,8 +63,7 @@ func (c *CLI) run(ctx context.Context, args []string) {
 
 	cmd, ok := c.byName[args[0]]
 	if !ok {
-		warningLog(fmt.Sprintf("Unknown command %q", args[0]))
-		infoLog("Type 'help' to see available commands.")
+		warningLog(fmt.Sprintf("Unknown command %q. Type \"help\" to see the available commands.", args[0]))
 		return
 	}
 

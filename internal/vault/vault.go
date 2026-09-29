@@ -129,21 +129,22 @@ func (v *Vault) List(ctx context.Context) ([]Secret, error) {
 	return secrets, nil
 }
 
-// Update encrypts value and replaces the secret's current value.
-func (v *Vault) Update(ctx context.Context, key string, value string, source string) error {
+// Update encrypts value, replaces the secret's current value, and returns the
+// updated secret (without its value).
+func (v *Vault) Update(ctx context.Context, key string, value string, source string) (Secret, error) {
 	old, err := v.store.GetSecret(ctx, key)
 	if err != nil {
-		return err
+		return Secret{}, err
 	}
 
 	encryptedValue, err := v.cipher.Encrypt(value)
 	if err != nil {
-		return fmt.Errorf("encrypt: %w", err)
+		return Secret{}, fmt.Errorf("encrypt: %w", err)
 	}
 
 	updated, err := v.store.UpdateSecretValue(ctx, key, encryptedValue)
 	if err != nil {
-		return err
+		return Secret{}, err
 	}
 
 	_ = v.store.LogEvent(ctx, database.EventLogInput{
@@ -156,7 +157,7 @@ func (v *Vault) Update(ctx context.Context, key string, value string, source str
 		NewEncryptedValue: &updated.EncryptedValue,
 	})
 
-	return nil
+	return fromRow(updated), nil
 }
 
 // Delete removes a secret. Its last value remains in the event log.

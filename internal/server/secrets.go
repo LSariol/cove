@@ -135,7 +135,7 @@ func (s *Server) patchSecret(w http.ResponseWriter, r *http.Request, key string,
 		return
 	}
 
-	if err := s.vault.Update(r.Context(), key, body.Value, source); err != nil {
+	if _, err := s.vault.Update(r.Context(), key, body.Value, source); err != nil {
 		writeError(w, http.StatusInternalServerError, "update_error", "failed to update secret")
 		return
 	}

@@ -63,7 +63,7 @@ func TestUpdateBumpsVersionAndLogsOldAndNew(t *testing.T) {
 	_ = v.Create(ctx, "app.key", "one", "test")
 	before := store.EncryptedValue("app.key")
 
-	if err := v.Update(ctx, "app.key", "two", "test"); err != nil {
+	if _, err := v.Update(ctx, "app.key", "two", "test"); err != nil {
 		t.Fatal(err)
 	}
 
@@ -124,7 +124,7 @@ func TestMissingSecretErrors(t *testing.T) {
 	if _, err := v.Get(ctx, "missing", "test"); err == nil {
 		t.Error("Get of a missing key succeeded")
 	}
-	if err := v.Update(ctx, "missing", "x", "test"); err == nil {
+	if _, err := v.Update(ctx, "missing", "x", "test"); err == nil {
 		t.Error("Update of a missing key succeeded")
 	}
 	if err := v.Delete(ctx, "missing", "test"); err == nil {
@@ -157,7 +157,7 @@ func TestErrorKinds(t *testing.T) {
 	if _, err := v.Get(ctx, "missing", "test"); !errors.Is(err, vault.ErrNotFound) {
 		t.Errorf("Get missing = %v, want ErrNotFound", err)
 	}
-	if err := v.Update(ctx, "missing", "x", "test"); !errors.Is(err, vault.ErrNotFound) {
+	if _, err := v.Update(ctx, "missing", "x", "test"); !errors.Is(err, vault.ErrNotFound) {
 		t.Errorf("Update missing = %v, want ErrNotFound", err)
 	}
 	if err := v.Delete(ctx, "missing", "test"); !errors.Is(err, vault.ErrNotFound) {
