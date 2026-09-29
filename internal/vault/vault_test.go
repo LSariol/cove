@@ -244,3 +244,17 @@ func TestNothingHappensWithoutARecord(t *testing.T) {
 		t.Errorf("the unrecorded update or delete wasn't rolled back: %+v, %v", got, err)
 	}
 }
+
+func TestReadEventsDoNotStoreTheValue(t *testing.T) {
+	ctx := context.Background()
+	v, store := newVault(t)
+	_ = v.Create(ctx, "app.key", "x", "test")
+	_, _ = v.Get(ctx, "app.key", "myapp")
+	_, _ = v.Show(ctx, "app.key", "cove_cli")
+
+	for _, e := range store.Events {
+		if e.Kind == database.EventRead && (e.OldEncryptedValue != nil || e.NewEncryptedValue != nil) {
+			t.Fatalf("read event stored a value: %+v", e)
+		}
+	}
+}

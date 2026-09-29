@@ -135,13 +135,13 @@ func (v *Vault) read(ctx context.Context, key string, source string, countRead b
 		secret = fromRow(s)
 		secret.Value = value
 
+		// Reads record who read which version, not the value itself.
 		return logEvent(ctx, tx, database.EventLogInput{
-			SecretID:          s.ID,
-			SecretKey:         s.Key,
-			SecretVersion:     s.Version,
-			Kind:              database.EventRead,
-			Source:            source,
-			OldEncryptedValue: &s.EncryptedValue,
+			SecretID:      s.ID,
+			SecretKey:     s.Key,
+			SecretVersion: s.Version,
+			Kind:          database.EventRead,
+			Source:        source,
 		})
 	})
 	if err != nil {
