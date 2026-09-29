@@ -27,7 +27,7 @@ internal/config/          Every setting, read from the environment once; secret 
 internal/vault/           The rules for secrets: validation, encryption, and the event log
 internal/database/        PostgreSQL connection pool, SQL queries, and migrations
 internal/encryption/      AES-256-GCM cipher and random secret generation
-internal/bootstrap/       Marker file that locks the bootstrap endpoint
+internal/bootstrap/       The bootstrap gate: time-limited, one-time token handout for new clients
 internal/server/          HTTP API: routing, middleware, and handlers
 internal/cli/             Interactive CLI for managing secrets directly
 ```
@@ -115,7 +115,8 @@ Then set `COVE_MIGRATE_DATABASE_URL` (as `cove_migrator`) and start Cove. It cre
 | `APP_ENV`            | No       | Runtime environment label (`DEV` or `PROD`) |
 | `APP_PORT`           | Yes      | Port the HTTP server listens on |
 | `APP_ENV_PATH`       | No       | The `.env` file to load first, and where auto-generated secrets are saved. Defaults to the `.env` file that was loaded. |
-| `APP_MARKER_PATH`    | No       | Directory for bootstrap marker files. Defaults to `/app/vault/markers`. |
+| `APP_MARKER_PATH`    | No       | Directory for the bootstrap state file. Defaults to `/app/vault/markers`. |
+| `COVE_BOOTSTRAP_ALLOWED_CIDRS` | No | Networks/addresses allowed to bootstrap, e.g. `172.18.0.0/16`. Empty allows any. |
 
 > **Important:** If you rotate `VAULT_ENCRYPTION_KEY`, existing secrets in the database cannot be decrypted. Back up your key and treat it like a master password.
 
@@ -302,9 +303,9 @@ Response (`200 OK`):
 
 **`GET /v0/bootstrap/lighthouse`** — No authentication required.
 
-Returns the `COVE_CLIENT_SECRET` in plaintext. This endpoint is one-use only: it creates a marker file on first call and returns `403 Forbidden` on subsequent calls until the marker is cleared via the CLI.
+Returns the `COVE_CLIENT_SECRET` in plaintext, but only while opened with `bootstrap open` in the CLI (10 minutes by default). It closes after one handout; the same address can fetch it again within 2 minutes, in case it crashed before saving it. Otherwise it answers `403` with `bootstrap_locked`, `bootstrap_expired`, or `bootstrap_forbidden` (address not in `COVE_BOOTSTRAP_ALLOWED_CIDRS`). Every attempt is recorded; `bootstrap status` shows them.
 
-This is intended for automated clients (e.g., [CoveClient](https://github.com/LSariol/CoveClient)) that need to retrieve their bearer token on first boot without any pre-shared credentials.
+This is intended for automated clients that need their bearer token on first boot without any pre-shared credentials. With [CoveClient](https://github.com/LSariol/CoveClient), use `LoadOrBootstrap(path)`: it saves the token and reuses it on later starts.
 
 ```json
 {
@@ -333,7 +334,7 @@ Open the prompt with `cove shell` (in Docker: `docker exec -it cove /cove shell`
 | `info` | `info <key>` | A secret's details and last read |
 | `history` | `history <key> [count]` | A secret's recent events |
 | `status` | `status` | Health overview |
-| `bootstrap` | `bootstrap <clear\|lock>` | Open or close the one-time bootstrap endpoint |
+| `bootstrap` | `bootstrap [open [duration]\|lock\|status]` | Open the bootstrap endpoint for 10 minutes, close it, or show its state |
 | `help` | `help [command]` | All commands, or one |
 | `exit` | `exit` | Leave the shell |
 
@@ -352,6 +353,6 @@ go get github.com/lsariol/coveclient
 ## Security Notes
 
 - `COVE_CLIENT_SECRET` and `VAULT_ENCRYPTION_KEY` are auto-generated on first start if not provided, and written back to the `.env` file. Store these values securely — losing `VAULT_ENCRYPTION_KEY` means losing access to all stored secrets.
-- The bootstrap endpoint is designed for one-time automated use. After a client has retrieved its bearer token, use `bootstrap lock` (CLI) to disable it.
+- The bootstrap endpoint is closed unless you open it with `bootstrap open`, and closes again after one handout or 10 minutes. Set `COVE_BOOTSTRAP_ALLOWED_CIDRS` to limit it to your Docker network.
 - Cove is intended for internal/private networks. It does not implement TLS termination — place it behind a reverse proxy (e.g., Nginx, Caddy) if exposed beyond localhost.
 - All create, read, update, and delete operations are written to `cove.event_log`, which retains the encrypted old and new values for audit purposes.

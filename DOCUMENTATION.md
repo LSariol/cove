@@ -63,7 +63,7 @@ internal/
   vault/
     vault.go                  The rules for secrets: encrypt/decrypt, store, and log every operation
     keys.go                   ValidateKey
-  bootstrap/marker.go         Marker file that locks the bootstrap endpoint (Lock / Clear / Locked)
+  bootstrap/gate.go           The bootstrap gate: open window, handout, grace period, allowed networks
   server/
     server.go                 Server struct; Run serves until stopped, then shuts down gracefully
     routes.go                 URL → handler table
@@ -82,7 +82,7 @@ internal/
     cmd_restore.go            restore
     cmd_history.go            info / history
     cmd_status.go             status
-    cmd_bootstrap.go          bootstrap clear / lock
+    cmd_bootstrap.go          bootstrap open / lock / status
     output.go                 stdout/stderr, symbols, color, and the prompt
 ```
 
@@ -136,7 +136,8 @@ All configuration comes from environment variables. `config.Load()` reads them f
 | `VAULT_ENCRYPTION_KEY` | Yes* | `encryption` | Master key material. SHA-256 of this value is the AES key. Shorter than 24 characters logs a warning. *Generated (45 chars) if empty. |
 | `APP_PORT` | **Yes** | `server.Start` | Listen port. The server binds `0.0.0.0:$APP_PORT`. |
 | `APP_ENV_PATH` | No | `config` | The `.env` file to load first, and where generated secrets are saved. Default: the `.env` file that was loaded. |
-| `APP_MARKER_PATH` | No | `bootstrap.Marker` | Directory for the `bootstrap_completed` marker. Default: `/app/vault/markers`. The older name `APP_MARKER_DIR` also works. |
+| `APP_MARKER_PATH` | No | `bootstrap.Gate` | Directory for the bootstrap state file (`bootstrap.json`). Default: `/app/vault/markers`. The older name `APP_MARKER_DIR` also works. |
+| `COVE_BOOTSTRAP_ALLOWED_CIDRS` | No | `bootstrap.Gate` | Comma-separated networks and/or addresses that may use the bootstrap endpoint, e.g. `172.18.0.0/16`. Empty allows any address. An invalid entry stops startup. |
 | `APP_ENV` | No | — | `DEV` / `PROD` label. Not read by the code yet. |
 
 Generated secrets use `encryption.GenerateSecret(n)`: `n` characters from `[a-zA-Z0-9]`, picked with `crypto/rand`.
@@ -178,6 +179,7 @@ Roles, the database itself, and connect permissions are created once per environ
 | `00004_event_log_history_index.sql` | Index for per-secret history lookups |
 | `00005_secret_key_format_check.sql` | Key format rule (`[A-Za-z0-9._-]`, 1–256 chars), `NOT VALID` so existing rows aren't checked |
 | `00006_event_log_rename_and_detail.sql` | Adds the `rename` event kind and a `detail` column (e.g. "renamed from X", "restored version 3") |
+| `00007_bootstrap_log.sql` | `cove.bootstrap_log`: every bootstrap request (time, address, outcome). Append-only for `cove_app` |
 
 Running them:
 
@@ -276,7 +278,7 @@ There is only one token. Every client gets the same access: full read/write to e
 | any | `/v0/health` | no | no | Liveness: the HTTP server is up |
 | any | `/v0/ready` | no | no | Readiness: the database is reachable |
 | any | `/v0/version` | yes | no | The running Cove version |
-| GET | `/v0/bootstrap/lighthouse` | no | no | One-time token handout ([§7](#7-bootstrap-flow)) |
+| GET | `/v0/bootstrap/lighthouse` | no | no | Token handout while opened with `bootstrap open` ([§7](#7-bootstrap-flow)) |
 | any | `/v0/auth` | yes | no | Checks that the token is valid |
 | GET | `/v0/secrets` | yes | no | List metadata for all secrets |
 | GET | `/v0/secrets/{key}` | yes | **yes** | Read (decrypted) value |
@@ -359,7 +361,7 @@ Every failure, including a key that already exists, returns `500 create_error`.
 | `missing_key`, `invalid_key`, `missing_source`, `invalid_body` | 400 | secret routes |
 | `not_found` | 404 | unknown `/v0/secrets*` path, GET/DELETE failure |
 | `method_not_allowed` | 405 | wrong method |
-| `bootstrap_locked` | 403 | bootstrap already used |
+| `bootstrap_locked`, `bootstrap_expired`, `bootstrap_forbidden` | 403 | bootstrap endpoint closed / window ran out / address not allowed ([§7](#7-bootstrap-flow)) |
 | `get_all`, `create_error`, `update_error`, `server_error`, `marker_error` | 500 | DB / config / bootstrap marker failures |
 | `not_ready` | 503 | `/v0/ready` when the database is unreachable |
 
@@ -381,29 +383,39 @@ curl -X DELETE -H "Authorization: Bearer $TOKEN" -H "X-Cove-Source: curl" $COVE/
 
 ## 7. Bootstrap flow
 
-The bootstrap endpoint lets a new client (named "Lighthouse" in the code) get `COVE_CLIENT_SECRET` without having any credentials yet. A marker file controls whether it's open:
+The bootstrap endpoint gives a new client (e.g. Lighthouse) the client token (`COVE_CLIENT_SECRET`) before it has any credentials. Because it hands out a token that unlocks every secret, it's **closed unless you open it**, and then only briefly.
+
+### Onboarding a client
 
 ```
-<APP_MARKER_PATH>/bootstrap_completed      (default /app/vault/markers/bootstrap_completed)
+cove> bootstrap open           # open for 10 minutes (or e.g. `bootstrap open 30m`)
+        (start the client; it fetches the token once and saves it)
+cove> bootstrap status         # check it worked: shows the last handout and recent attempts
 ```
 
-`GET /v0/bootstrap/lighthouse`:
+With CoveClient, the client side is one call on every start: `LoadOrBootstrap(path)` reads the saved token, or fetches and saves it when there's none yet.
 
-1. Tries to create the marker with `O_CREATE|O_EXCL`, so only one caller can succeed.
-2. If the marker already exists, returns `403 bootstrap_locked`. If it can't be created (permissions, full disk), returns `500 marker_error` and logs why.
-3. If `COVE_CLIENT_SECRET` is empty, deletes the marker again and returns `500 server_error`.
-4. Otherwise returns `{ "secret": "<COVE_CLIENT_SECRET>" }` and prints `Bootstrap complete`.
+### Rules
 
-Typical use:
+`GET /v0/bootstrap/lighthouse` answers:
 
-```
-cove> bootstrap clear        # open the window
-          (start the new client; it calls Bootstrap() once and stores the token)
-          (the first call automatically closes the window again)
-cove> bootstrap lock         # or close it by hand without it being used
-```
+| Situation | Response |
+|---|---|
+| The endpoint is open (within its window) | `200 { "secret": "..." }`, and the endpoint **closes** |
+| The same address asks again within **2 minutes** of a handout (e.g. it crashed before saving the token) | `200` again (`redelivered`) |
+| Closed (never opened, already used, or `bootstrap lock`) | `403 bootstrap_locked` |
+| Opened, but the window ran out before anyone used it | `403 bootstrap_expired` |
+| `COVE_BOOTSTRAP_ALLOWED_CIDRS` is set and the address isn't in it | `403 bootstrap_forbidden` (doesn't use up the window) |
+| The state file can't be read or saved | `500 marker_error` |
 
-The marker directory is bind-mounted in Docker, so the lock state survives container restarts. On a fresh install there's no marker, so **the endpoint starts open**. Anyone who can reach the port before your client does gets the token. Run `bootstrap lock` right after the first deploy if you don't plan to use it.
+- **Closed by default:** a fresh install never starts with the endpoint open.
+- **Allowed networks (optional):** set `COVE_BOOTSTRAP_ALLOWED_CIDRS`, e.g. `172.18.0.0/16` for the Docker network. The caller's address comes from the connection itself, never from headers like `X-Forwarded-For`.
+- **Every attempt is recorded** in `cove.bootstrap_log` (time, address, outcome) and in the server log. `bootstrap status` shows the last 5.
+- **CLI:** `bootstrap open [duration]` (1m–24h; `bootstrap clear` is the older name), `bootstrap lock` (close now, including any grace period), `bootstrap status` (or just `bootstrap`).
+
+### State
+
+The state lives in `<APP_MARKER_PATH>/bootstrap.json` (default `/app/vault/markers/bootstrap.json`, bind-mounted in Docker so it survives restarts): when the open window ends, and the last handout (time and address). It's written atomically. A missing file means closed; a corrupt one fails closed. The v0.2.0 marker file, `bootstrap_completed`, is ignored and removed on the next `open` or `lock`.
 
 ---
 
@@ -437,7 +449,7 @@ The prompt shows the environment from `APP_ENV`: `cove (dev)>`, and `cove (prod)
 | `info` | `i` | `info <key>` | Version, app reads, when and by whom it was last read, created and updated times. For a deleted key, says when and by whom it was deleted. |
 | `history` | | `history <key> [count]` | The last `count` events (default 20): when, what, version, source, detail. Works for deleted keys. |
 | `status` | | `status` | Version, environment, database, schema version, number of secrets, bootstrap state. Non-zero exit when something needs attention. |
-| `bootstrap` | `b` | `bootstrap clear` / `bootstrap lock` | Opens or closes the one-time bootstrap endpoint ([§7](#7-bootstrap-flow)). |
+| `bootstrap` | `b` | `bootstrap open [duration]` / `lock` / `status` | Opens the bootstrap endpoint for 10 minutes (or the given duration), closes it, or shows its state and recent attempts ([§7](#7-bootstrap-flow)). |
 | `help` | `h` | `help [command]` | All commands, or one. |
 | `exit` | `quit` | `exit` | Leaves the shell (or stops the server in plain `cove`). |
 
@@ -556,7 +568,7 @@ Back up all of these. **Without the key, the DB dump is useless.**
 
 1. Put a new `COVE_CLIENT_SECRET` (at least 24 characters) in the host `.env`.
 2. `docker compose restart cove`
-3. Update every client, either by hand or by running `bootstrap clear` and letting a client call `Bootstrap()` again.
+3. Update every client, either by hand or by running `bootstrap open` and letting a client fetch it again (with `LoadOrBootstrap`, delete its token file first).
 
 ### Recovering a deleted or overwritten secret
 
@@ -578,12 +590,11 @@ These remain in the current code. They're grouped by how much they matter.
 
 1. Status codes are coarse: a duplicate create returns `500` (not `409`), updating a missing key returns `500` (not `404`), and a decrypt failure on GET returns `404`.
 2. `/v0/health`, `/v0/ready`, `/v0/auth` and `/v0/version` accept any HTTP method.
-3. The bootstrap endpoint starts **open** on a fresh install (no marker file).
-4. `read_count` goes up even when decryption then fails.
-5. There's one global token. Clients can't be given read-only or per-secret access.
+3. `read_count` goes up even when decryption then fails.
+4. There's one global token. Clients can't be given read-only or per-secret access; bootstrap hands out that same token.
 
 ### Process and runtime
 
-6. `LogEvent` errors are thrown away, so a broken `event_log` table fails silently.
-7. The Dockerfile runs `mkdir -p /app/cove`, which isn't used anywhere.
-8. `restore` only sees history recorded under the key's current name; values from before a `rename` are under the old name.
+5. `LogEvent` errors are thrown away, so a broken `event_log` table fails silently.
+6. The Dockerfile runs `mkdir -p /app/cove`, which isn't used anywhere.
+7. `restore` only sees history recorded under the key's current name; values from before a `rename` are under the old name.
