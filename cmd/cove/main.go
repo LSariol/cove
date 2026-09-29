@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"io"
 	"log"
+	"net/netip"
 	"os"
 	"os/signal"
 	"runtime/debug"
@@ -96,7 +97,7 @@ func runServer(withShell bool) {
 
 	db := connect(ctx, cfg)
 	v := vault.New(db, encryption.NewCipher(cfg.EncryptionKey))
-	gate := bootstrap.NewGate(cfg.MarkerDir, nil)
+	gate := bootstrap.NewGate(cfg.MarkerDir, mustBootstrapAllowed(cfg))
 
 	srv := server.New(v, gate, db, server.Options{
 		ClientSecret: cfg.ClientSecret,
@@ -171,7 +172,7 @@ func openClient(ctx context.Context) (*database.Database, *cli.CLI) {
 
 	db := connect(ctx, cfg)
 	v := vault.New(db, encryption.NewCipher(cfg.EncryptionKey))
-	return db, cli.New(v, bootstrap.NewGate(cfg.MarkerDir, nil), cli.Options{Env: cfg.Env, Version: buildVersion(), DB: db})
+	return db, cli.New(v, bootstrap.NewGate(cfg.MarkerDir, mustBootstrapAllowed(cfg)), cli.Options{Env: cfg.Env, Version: buildVersion(), DB: db})
 }
 
 // connect opens the database and confirms its schema matches this build.
@@ -187,6 +188,16 @@ func connect(ctx context.Context, cfg config.Config) *database.Database {
 		fatal(err)
 	}
 	return db
+}
+
+// mustBootstrapAllowed returns the networks allowed to bootstrap, or exits if
+// COVE_BOOTSTRAP_ALLOWED_CIDRS can't be parsed.
+func mustBootstrapAllowed(cfg config.Config) []netip.Prefix {
+	allowed, err := cfg.BootstrapAllowed()
+	if err != nil {
+		fatal(err)
+	}
+	return allowed
 }
 
 func loadConfig() config.Config {

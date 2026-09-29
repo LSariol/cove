@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"io/fs"
+	"net/netip"
 	"os"
 	"strings"
 
@@ -23,6 +24,11 @@ type Config struct {
 	EnvPath            string // APP_ENV_PATH: file that generated secrets are written to (default: the .env file that was loaded)
 	MarkerDir          string // APP_MARKER_PATH (or APP_MARKER_DIR): bootstrap marker directory
 	Env                string // APP_ENV: "DEV" or "PROD", shown in the CLI prompt
+
+	// BootstrapAllowedCIDRs (COVE_BOOTSTRAP_ALLOWED_CIDRS) limits which
+	// addresses may use the bootstrap endpoint: a comma-separated list of
+	// networks and/or addresses, e.g. "172.18.0.0/16". Empty allows any.
+	BootstrapAllowedCIDRs string
 }
 
 const defaultMarkerDir = "/app/vault/markers"
@@ -73,6 +79,8 @@ func fromEnv(envFile string) Config {
 		EnvPath:            os.Getenv("APP_ENV_PATH"),
 		MarkerDir:          os.Getenv("APP_MARKER_PATH"),
 		Env:                os.Getenv("APP_ENV"),
+
+		BootstrapAllowedCIDRs: os.Getenv("COVE_BOOTSTRAP_ALLOWED_CIDRS"),
 	}
 
 	if cfg.EnvPath == "" {
@@ -99,11 +107,39 @@ func (c Config) Validate() error {
 	if c.Port == "" {
 		return errors.New("APP_PORT is not set. Set it to the port the API should listen on, e.g. 2100")
 	}
+	if _, err := c.BootstrapAllowed(); err != nil {
+		return err
+	}
 	if len(c.ClientSecret) < minSecretLength {
 		return fmt.Errorf("COVE_CLIENT_SECRET is too short (%d characters, need at least %d). "+
 			"Leave it empty to have Cove generate one, then update your clients", len(c.ClientSecret), minSecretLength)
 	}
 	return nil
+}
+
+// BootstrapAllowed parses BootstrapAllowedCIDRs. A plain address counts as a
+// network of one (e.g. 172.18.0.5 means 172.18.0.5/32). Empty means any
+// address, and returns nil.
+func (c Config) BootstrapAllowed() ([]netip.Prefix, error) {
+	var prefixes []netip.Prefix
+
+	for _, entry := range strings.Split(c.BootstrapAllowedCIDRs, ",") {
+		entry = strings.TrimSpace(entry)
+		if entry == "" {
+			continue
+		}
+
+		if prefix, err := netip.ParsePrefix(entry); err == nil {
+			prefixes = append(prefixes, prefix.Masked())
+			continue
+		}
+		if addr, err := netip.ParseAddr(entry); err == nil {
+			prefixes = append(prefixes, netip.PrefixFrom(addr, addr.BitLen()))
+			continue
+		}
+		return nil, fmt.Errorf("COVE_BOOTSTRAP_ALLOWED_CIDRS: %q isn't a network or address (e.g. 172.18.0.0/16 or 172.18.0.5)", entry)
+	}
+	return prefixes, nil
 }
 
 // Warnings returns problems that are risky but shouldn't stop Cove. A short

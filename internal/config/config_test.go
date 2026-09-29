@@ -219,3 +219,31 @@ func TestShortEncryptionKeyIsOnlyAWarning(t *testing.T) {
 		t.Fatalf("Warnings = %v for a 45-character key", cfg.Warnings())
 	}
 }
+
+func TestBootstrapAllowed(t *testing.T) {
+	cfg := validConfig()
+
+	if got, err := cfg.BootstrapAllowed(); err != nil || got != nil {
+		t.Fatalf("empty = %v, %v; want nil (any address)", got, err)
+	}
+
+	cfg.BootstrapAllowedCIDRs = " 172.18.0.0/16, 10.0.0.159 ,fd00::/8"
+	got, err := cfg.BootstrapAllowed()
+	if err != nil {
+		t.Fatal(err)
+	}
+	want := []string{"172.18.0.0/16", "10.0.0.159/32", "fd00::/8"}
+	if len(got) != len(want) {
+		t.Fatalf("got %v, want %v", got, want)
+	}
+	for i := range want {
+		if got[i].String() != want[i] {
+			t.Errorf("entry %d = %s, want %s", i, got[i], want[i])
+		}
+	}
+
+	cfg.BootstrapAllowedCIDRs = "172.18.0.0/16,docker-network"
+	if err := cfg.Validate(); err == nil || !strings.Contains(err.Error(), "docker-network") {
+		t.Fatalf("Validate with a bad entry = %v", err)
+	}
+}
