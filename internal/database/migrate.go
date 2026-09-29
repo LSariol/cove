@@ -81,7 +81,7 @@ func (d *Database) CheckSchemaVersion(ctx context.Context) error {
 		return err
 	}
 
-	const fix = "set COVE_MIGRATE_DATABASE_URL so Cove applies them on startup, or run `cove migrate up`"
+	const fix = "set COVE_MIGRATE_DATABASE_URL so Cove applies its migrations on startup, or run `cove migrate up`"
 
 	var have int64
 	const query = `SELECT COALESCE(MAX(version_id), 0) FROM cove.goose_db_version WHERE is_applied`
@@ -94,7 +94,7 @@ func (d *Database) CheckSchemaVersion(ctx context.Context) error {
 	}
 
 	if have < want {
-		return fmt.Errorf("the database schema is at version %d, but this version of Cove needs %d. Migrations are missing: %s", have, want, fix)
+		return fmt.Errorf("the database schema is at version %d, but this version of Cove needs %d: %s", have, want, fix)
 	}
 	return nil
 }
