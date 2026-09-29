@@ -100,36 +100,54 @@ func commandTable(embedded bool) []command {
 		},
 		{
 			names:    []string{"help", "h"},
-			usages:   []usage{{help: "Shows this help."}},
+			usages:   []usage{{forms: []string{"[command]"}, help: "Shows every command, or just one."}},
 			run:      (*CLI).help,
 			complete: (*CLI).commandNames,
 		},
 	}
 }
 
+// help lists every command, or with an argument (`help get`) just that one.
 func (c *CLI) help(ctx context.Context, args []string) error {
 	var b strings.Builder
-	b.WriteString("Available Commands:\n")
 
-	for _, cmd := range c.commands {
-		names := strings.Join(cmd.names, ", ")
-
-		for _, u := range cmd.usages {
-			forms := u.forms
-			if len(forms) == 0 {
-				forms = []string{""}
-			}
-
-			b.WriteString("\n")
-			for _, form := range forms {
-				fmt.Fprintf(&b, "  %s\n", strings.TrimSpace(names+" "+form))
-			}
-			fmt.Fprintf(&b, "      %s\n", u.help)
+	switch len(args) {
+	case 1:
+		b.WriteString("Commands:\n")
+		for _, cmd := range c.commands {
+			writeUsages(&b, cmd)
 		}
+		b.WriteString("\nType \"help <command>\" for just one command.\n")
+	case 2:
+		cmd, ok := c.byName[strings.ToLower(args[1])]
+		if !ok {
+			return usageError{reason: fmt.Sprintf("Unknown command %q.", args[1]), form: "help [command]"}
+		}
+		writeUsages(&b, *cmd)
+	default:
+		return usageError{form: "help [command]"}
 	}
 
 	out(strings.TrimRight(b.String(), "\n"))
 	return nil
+}
+
+// writeUsages writes each way to call cmd, with its description.
+func writeUsages(b *strings.Builder, cmd command) {
+	names := strings.Join(cmd.names, ", ")
+
+	for _, u := range cmd.usages {
+		forms := u.forms
+		if len(forms) == 0 {
+			forms = []string{""}
+		}
+
+		b.WriteString("\n")
+		for _, form := range forms {
+			fmt.Fprintf(b, "  %s\n", strings.TrimSpace(names+" "+form))
+		}
+		fmt.Fprintf(b, "      %s\n", u.help)
+	}
 }
 
 func (c *CLI) exit(ctx context.Context, args []string) error {
