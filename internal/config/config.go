@@ -2,8 +2,11 @@
 package config
 
 import (
+	"errors"
 	"fmt"
+	"io/fs"
 	"os"
+	"strings"
 
 	"github.com/LSariol/Cove/internal/encryption"
 	"github.com/joho/godotenv"
@@ -23,18 +26,25 @@ type Config struct {
 
 const defaultMarkerDir = "/app/vault/markers"
 
-// Loads environment variables regardless of dev or prod environments.
+// envFiles are tried in order by Load; the first one that exists is loaded.
+var envFiles = []string{".env", "/app/vault/.env"}
+
+// Load loads environment variables from the first .env file that exists, for
+// both dev (./.env) and Docker (/app/vault/.env). A file that exists but can't
+// be read or parsed is an error; Load doesn't silently move on to the next one.
 func Load() error {
+	for _, path := range envFiles {
+		if _, err := os.Stat(path); errors.Is(err, fs.ErrNotExist) {
+			continue
+		}
 
-	if err := godotenv.Load(".env"); err == nil {
+		if err := godotenv.Load(path); err != nil {
+			return fmt.Errorf("load %s: %w", path, err)
+		}
 		return nil
 	}
 
-	if err := godotenv.Load("/app/vault/.env"); err == nil {
-		return nil
-	}
-
-	return fmt.Errorf("no .env file found")
+	return fmt.Errorf("no .env file found (looked for %s)", strings.Join(envFiles, ", "))
 }
 
 // FromEnv reads the Config from environment variables. Call Load first so the
