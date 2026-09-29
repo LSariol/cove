@@ -62,3 +62,18 @@ func TestGenerateSecret(t *testing.T) {
 		}
 	}
 }
+
+func TestDecryptRejectsBadInputWithoutPanicking(t *testing.T) {
+	c := NewCipher("test-vault-key")
+
+	for _, input := range []string{
+		"",                 // empty
+		"not base64 !!",    // invalid base64
+		"YWJj",             // valid base64, shorter than a nonce
+		"AAAAAAAAAAAAAAAA", // nonce-sized, but no authentic ciphertext
+	} {
+		if _, err := c.Decrypt(input); err == nil {
+			t.Errorf("Decrypt(%q) succeeded, want an error", input)
+		}
+	}
+}

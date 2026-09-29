@@ -7,6 +7,7 @@ import (
 	"crypto/rand"
 	"crypto/sha256"
 	"encoding/base64"
+	"errors"
 	"fmt"
 )
 
@@ -51,7 +52,10 @@ func (c *Cipher) Encrypt(data string) (string, error) {
 func (c *Cipher) Decrypt(data string) (string, error) {
 
 	//Decode the cipher from base64
-	cipherText, _ := base64.URLEncoding.DecodeString(data)
+	cipherText, err := base64.URLEncoding.DecodeString(data)
+	if err != nil {
+		return "", fmt.Errorf("decode ciphertext: %w", err)
+	}
 
 	block, err := aes.NewCipher(c.key[:])
 	if err != nil {
@@ -65,6 +69,9 @@ func (c *Cipher) Decrypt(data string) (string, error) {
 	}
 
 	// Extract nonce and cipher text
+	if len(cipherText) < gcm.NonceSize() {
+		return "", errors.New("ciphertext is too short")
+	}
 	nonce, cipherText := cipherText[:gcm.NonceSize()], cipherText[gcm.NonceSize():]
 
 	// decrypt the data
