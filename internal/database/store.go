@@ -270,6 +270,41 @@ func (d *Database) ValueVersions(ctx context.Context, key string) (map[int]strin
 	return versions, nil
 }
 
+// RecordBootstrap logs a request to the bootstrap endpoint.
+func (d *Database) RecordBootstrap(ctx context.Context, remoteAddr string, outcome string) error {
+	const query = `INSERT INTO cove.bootstrap_log (remote_addr, outcome) VALUES ($1, $2)`
+
+	if _, err := d.Pool.Exec(ctx, query, remoteAddr, outcome); err != nil {
+		return fmt.Errorf("record bootstrap attempt: %w", err)
+	}
+	return nil
+}
+
+// RecentBootstraps returns the most recent bootstrap attempts, newest first.
+func (d *Database) RecentBootstraps(ctx context.Context, limit int) ([]BootstrapAttempt, error) {
+	const query = `
+	SELECT occurred_at, remote_addr, outcome
+	FROM cove.bootstrap_log
+	ORDER BY occurred_at DESC, id DESC
+	LIMIT $1`
+
+	rows, err := d.Pool.Query(ctx, query, limit)
+	if err != nil {
+		return nil, fmt.Errorf("recent bootstrap attempts: %w", err)
+	}
+	defer rows.Close()
+
+	var attempts []BootstrapAttempt
+	for rows.Next() {
+		var a BootstrapAttempt
+		if err := rows.Scan(&a.OccurredAt, &a.RemoteAddr, &a.Outcome); err != nil {
+			return nil, fmt.Errorf("scan bootstrap attempt: %w", err)
+		}
+		attempts = append(attempts, a)
+	}
+	return attempts, rows.Err()
+}
+
 // CountSecrets returns how many secrets the vault holds.
 func (d *Database) CountSecrets(ctx context.Context) (int, error) {
 	var n int

@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"strings"
+	"text/tabwriter"
 	"time"
 
 	"github.com/LSariol/Cove/internal/bootstrap"
@@ -18,7 +19,7 @@ func (c *CLI) bootstrapCmd(ctx context.Context, args []string) error {
 	const form = "bootstrap [open [duration] | lock | status]"
 
 	if len(args) == 1 {
-		return c.bootstrapStatus()
+		return c.bootstrapStatus(ctx)
 	}
 
 	switch strings.ToLower(args[1]) {
@@ -56,14 +57,17 @@ func (c *CLI) bootstrapCmd(ctx context.Context, args []string) error {
 		if len(args) != 2 {
 			return usageError{form: form}
 		}
-		return c.bootstrapStatus()
+		return c.bootstrapStatus(ctx)
 
 	default:
 		return usageError{reason: fmt.Sprintf("Unknown bootstrap option %q.", args[1]), form: form}
 	}
 }
 
-func (c *CLI) bootstrapStatus() error {
+// recentBootstrapCount is how many attempts `bootstrap status` shows.
+const recentBootstrapCount = 5
+
+func (c *CLI) bootstrapStatus(ctx context.Context) error {
 	st, err := c.bootstrap.Status()
 	if err != nil {
 		return fmt.Errorf("Couldn't read the bootstrap state: %v", err)
@@ -86,7 +90,26 @@ func (c *CLI) bootstrapStatus() error {
 		allowed = strings.Join(names, ", ")
 	}
 	out("Allowed from:  " + allowed)
-	return nil
+
+	if c.db == nil {
+		return nil
+	}
+	attempts, err := c.db.RecentBootstraps(ctx, recentBootstrapCount)
+	if err != nil {
+		return fmt.Errorf("Couldn't read recent bootstrap attempts: %v", err)
+	}
+	if len(attempts) == 0 {
+		out("\nNo bootstrap attempts recorded yet.")
+		return nil
+	}
+
+	out("\nRecent attempts:")
+	w := tabwriter.NewWriter(stdout, 0, 0, 2, ' ', 0)
+	fmt.Fprintln(w, "  WHEN\tFROM\tRESULT")
+	for _, a := range attempts {
+		fmt.Fprintf(w, "  %s\t%s\t%s\n", formatTime(a.OccurredAt), a.RemoteAddr, a.Outcome)
+	}
+	return w.Flush()
 }
 
 // describeBootstrap summarizes whether the endpoint is open, e.g.

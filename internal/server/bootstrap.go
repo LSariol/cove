@@ -27,9 +27,11 @@ func (s *Server) bootstrapHandler(w http.ResponseWriter, r *http.Request) {
 	outcome, err := s.bootstrap.Claim(addr)
 	if err != nil {
 		log.Printf("bootstrap: request from %s failed: %v", addr, err)
+		s.recordBootstrap(r, addr, "error")
 		writeError(w, http.StatusInternalServerError, "marker_error", "the bootstrap state could not be read or saved")
 		return
 	}
+	s.recordBootstrap(r, addr, string(outcome))
 
 	switch outcome {
 	case bootstrap.Granted:
@@ -53,6 +55,14 @@ func (s *Server) bootstrapHandler(w http.ResponseWriter, r *http.Request) {
 	writeResponse(w, http.StatusOK, struct {
 		Secret string `json:"secret"`
 	}{Secret: s.clientSecret})
+}
+
+// recordBootstrap writes the attempt to cove.bootstrap_log. A failure is only
+// logged: it mustn't change the answer the client gets.
+func (s *Server) recordBootstrap(r *http.Request, addr netip.Addr, outcome string) {
+	if err := s.db.RecordBootstrap(r.Context(), addr.String(), outcome); err != nil {
+		log.Printf("bootstrap: %v", err)
+	}
 }
 
 // remoteAddr returns the address of the connection the request came from. It

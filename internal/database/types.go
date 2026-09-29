@@ -34,6 +34,13 @@ type EventLogInput struct {
 	Detail            string // optional context, e.g. "renamed from X"
 }
 
+// BootstrapAttempt is a row of cove.bootstrap_log.
+type BootstrapAttempt struct {
+	OccurredAt time.Time
+	RemoteAddr string
+	Outcome    string
+}
+
 // Event is a row of cove.event_log, without its encrypted values.
 type Event struct {
 	SecretKey     string

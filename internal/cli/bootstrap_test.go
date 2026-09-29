@@ -4,8 +4,10 @@ import (
 	"context"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/LSariol/Cove/internal/bootstrap"
+	"github.com/LSariol/Cove/internal/database"
 )
 
 func TestBootstrapCommands(t *testing.T) {
@@ -44,6 +46,25 @@ func TestBootstrapCommands(t *testing.T) {
 	for _, bad := range [][]string{{"open", "5s"}, {"open", "48h"}, {"open", "soon"}, {"nope"}} {
 		if _, _, err := run(bad...); err == nil {
 			t.Errorf("bootstrap %v was accepted", bad)
+		}
+	}
+}
+
+func TestBootstrapStatusShowsRecentAttempts(t *testing.T) {
+	c, _ := newTestCLI(t, "")
+	c.bootstrap = bootstrap.NewGate(t.TempDir(), nil)
+	c.db = &fakeDB{attempts: []database.BootstrapAttempt{
+		{OccurredAt: time.Now(), RemoteAddr: "172.18.0.5", Outcome: "granted"},
+		{OccurredAt: time.Now(), RemoteAddr: "192.168.1.50", Outcome: "locked"},
+	}}
+
+	o, _ := captureOutput(t)
+	if err := c.Exec(context.Background(), []string{"bootstrap", "status"}); err != nil {
+		t.Fatal(err)
+	}
+	for _, want := range []string{"Recent attempts:", "172.18.0.5", "granted", "192.168.1.50", "locked"} {
+		if !strings.Contains(o.String(), want) {
+			t.Errorf("status is missing %q:\n%s", want, o.String())
 		}
 	}
 }

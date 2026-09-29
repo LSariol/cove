@@ -7,6 +7,7 @@ import (
 	"testing"
 
 	"github.com/LSariol/Cove/internal/bootstrap"
+	"github.com/LSariol/Cove/internal/database"
 	"github.com/LSariol/Cove/internal/encryption"
 	"github.com/LSariol/Cove/internal/vault"
 	"github.com/LSariol/Cove/internal/vault/vaulttest"
@@ -15,11 +16,15 @@ import (
 type fakeDB struct {
 	pingErr    error
 	have, want int64
+	attempts   []database.BootstrapAttempt
 }
 
 func (f *fakeDB) Ping(ctx context.Context) error { return f.pingErr }
 func (f *fakeDB) SchemaVersion(ctx context.Context) (int64, int64, error) {
 	return f.have, f.want, nil
+}
+func (f *fakeDB) RecentBootstraps(ctx context.Context, limit int) ([]database.BootstrapAttempt, error) {
+	return f.attempts, nil
 }
 
 func newStatusCLI(t *testing.T, db *fakeDB) *CLI {

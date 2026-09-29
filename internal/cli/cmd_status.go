@@ -6,6 +6,8 @@ import (
 	"fmt"
 	"strings"
 	"text/tabwriter"
+
+	"github.com/LSariol/Cove/internal/database"
 )
 
 // StatusSource reports database health for `status`. *database.Database
@@ -13,6 +15,7 @@ import (
 type StatusSource interface {
 	Ping(ctx context.Context) error
 	SchemaVersion(ctx context.Context) (have int64, want int64, err error)
+	RecentBootstraps(ctx context.Context, limit int) ([]database.BootstrapAttempt, error)
 }
 
 // status prints an overview of Cove's health, and returns an error (so a

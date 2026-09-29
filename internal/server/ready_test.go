@@ -9,12 +9,20 @@ import (
 	"github.com/LSariol/Cove/internal/bootstrap"
 )
 
+// fakePinger is a fake DB: Ping returns err, and bootstrap attempts are kept
+// in attempts.
 type fakePinger struct {
-	err error
+	err      error
+	attempts []string
 }
 
 func (p *fakePinger) Ping(ctx context.Context) error {
 	return p.err
+}
+
+func (p *fakePinger) RecordBootstrap(ctx context.Context, remoteAddr string, outcome string) error {
+	p.attempts = append(p.attempts, remoteAddr+" "+outcome)
+	return nil
 }
 
 func TestReadyReflectsDatabase(t *testing.T) {

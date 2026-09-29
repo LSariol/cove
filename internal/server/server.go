@@ -12,9 +12,11 @@ import (
 	"github.com/LSariol/Cove/internal/vault"
 )
 
-// Pinger checks that the database is reachable. *database.Database implements it.
-type Pinger interface {
+// DB is what the server needs from the database besides the vault: the
+// readiness check and the bootstrap log. *database.Database implements it.
+type DB interface {
 	Ping(ctx context.Context) error
+	RecordBootstrap(ctx context.Context, remoteAddr string, outcome string) error
 }
 
 // Options are the Server's settings.
@@ -27,14 +29,14 @@ type Options struct {
 type Server struct {
 	vault        *vault.Vault
 	bootstrap    *bootstrap.Gate
-	db           Pinger
+	db           DB
 	clientSecret string
 	port         string
 	version      string
 }
 
-// New returns a Server. db is used by the readiness check.
-func New(v *vault.Vault, gate *bootstrap.Gate, db Pinger, opts Options) *Server {
+// New returns a Server.
+func New(v *vault.Vault, gate *bootstrap.Gate, db DB, opts Options) *Server {
 	return &Server{
 		vault:        v,
 		bootstrap:    gate,
