@@ -80,9 +80,13 @@ func commandTable(embedded bool) []command {
 			usages: []usage{
 				{help: "Lists every secret's name and details. Values are never shown."},
 				{forms: []string{"<prefix>"}, help: "Lists secrets whose keys start with <prefix>."},
-				{forms: []string{"<text> fuzzy", "<text> f"}, help: "Lists secrets whose keys contain <text>."},
 			},
 			run: (*CLI).list,
+		},
+		{
+			names:  []string{"search", "s"},
+			usages: []usage{{forms: []string{"<text>"}, help: "Lists secrets whose keys contain <text> (not case-sensitive)."}},
+			run:    (*CLI).search,
 		},
 		{
 			names: []string{"bootstrap", "b"},

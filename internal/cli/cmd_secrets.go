@@ -94,8 +94,16 @@ func (c *CLI) update(ctx context.Context, args []string) error {
 	return nil
 }
 
+func (c *CLI) search(ctx context.Context, args []string) error {
+	if len(args) != 2 {
+		return usageError{form: "search <text>"}
+	}
+	return c.printSecrets(ctx, args[1], "fuzzy")
+}
+
+// list also accepts the older `list <text> fuzzy` (or `f`) form of search.
 func (c *CLI) list(ctx context.Context, args []string) error {
-	const form = "list [prefix]  or  list <text> fuzzy"
+	const form = "list [prefix]   (to match anywhere in the key: search <text>)"
 
 	switch len(args) {
 	case 1:
