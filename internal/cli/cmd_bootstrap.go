@@ -21,18 +21,18 @@ func (c *CLI) bootstrapCmd(ctx context.Context, args []string) error {
 			return fmt.Errorf("Couldn't open the bootstrap endpoint: %v", err)
 		}
 
-		successLog("Bootstrap endpoint opened. The next request to /v0/bootstrap/lighthouse receives the client token.\n")
+		success("Bootstrap endpoint opened. The next request to /v0/bootstrap/lighthouse receives the client token.")
 
 	case "lock":
 		if err := c.bootstrap.Lock(); err != nil {
 			if errors.Is(err, bootstrap.ErrLocked) {
-				infoLog("The bootstrap endpoint is already locked.")
+				info("The bootstrap endpoint is already locked.")
 				return nil
 			}
 			return fmt.Errorf("Couldn't lock the bootstrap endpoint: %v", err)
 		}
 
-		successLog("Bootstrap endpoint locked.\n")
+		success("Bootstrap endpoint locked.")
 
 	default:
 		return usageError{reason: fmt.Sprintf("Unknown bootstrap option %q.", args[1]), form: form}

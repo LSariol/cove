@@ -22,6 +22,7 @@ type Config struct {
 	Port               string // APP_PORT
 	EnvPath            string // APP_ENV_PATH: file that generated secrets are written to (default: the .env file that was loaded)
 	MarkerDir          string // APP_MARKER_PATH (or APP_MARKER_DIR): bootstrap marker directory
+	Env                string // APP_ENV: "DEV" or "PROD", shown in the CLI prompt
 }
 
 const defaultMarkerDir = "/app/vault/markers"
@@ -71,6 +72,7 @@ func fromEnv(envFile string) Config {
 		Port:               os.Getenv("APP_PORT"),
 		EnvPath:            os.Getenv("APP_ENV_PATH"),
 		MarkerDir:          os.Getenv("APP_MARKER_PATH"),
+		Env:                os.Getenv("APP_ENV"),
 	}
 
 	if cfg.EnvPath == "" {

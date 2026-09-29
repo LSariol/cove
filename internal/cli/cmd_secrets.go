@@ -21,7 +21,7 @@ func (c *CLI) get(ctx context.Context, args []string) error {
 		return secretError("get", key, err)
 	}
 
-	successLog(fmt.Sprintf("%s: %s\n", secret.Key, secret.Value))
+	out(secret.Value)
 	return nil
 }
 
@@ -36,7 +36,7 @@ func (c *CLI) create(ctx context.Context, args []string) error {
 		return secretError("create", key, err)
 	}
 
-	successLog(fmt.Sprintf("Created %q.\n", key))
+	success(fmt.Sprintf("Created %q.", key))
 	return nil
 }
 
@@ -46,18 +46,17 @@ func (c *CLI) delete(ctx context.Context, args []string) error {
 	}
 	key := args[1]
 
-	warningLog(fmt.Sprintf("Delete %q? (y/N)", key))
-	fmt.Print("Cove CLI> ")
+	ask(fmt.Sprintf("Delete %q? (y/N)", key))
 
 	if !c.scanner.Scan() {
-		infoLog("Delete cancelled.")
+		info("Delete cancelled.")
 		return nil
 	}
 
 	response := strings.ToLower(strings.TrimSpace(c.scanner.Text()))
 
 	if response != "y" && response != "yes" {
-		infoLog("Delete cancelled.")
+		info("Delete cancelled.")
 		return nil
 	}
 
@@ -65,7 +64,7 @@ func (c *CLI) delete(ctx context.Context, args []string) error {
 		return secretError("delete", key, err)
 	}
 
-	successLog(fmt.Sprintf("Deleted %q.\n", key))
+	success(fmt.Sprintf("Deleted %q.", key))
 	return nil
 }
 
@@ -84,7 +83,7 @@ func (c *CLI) update(ctx context.Context, args []string) error {
 		return secretError("update", key, err)
 	}
 
-	successLog(fmt.Sprintf("Updated %q (now version %d).\n", key, updated.Version))
+	success(fmt.Sprintf("Updated %q (now version %d).", key, updated.Version))
 	return nil
 }
 
@@ -154,9 +153,9 @@ func (c *CLI) printSecrets(ctx context.Context, term string, mode string) error 
 
 	if len(matched) == 0 {
 		if mode == "all" {
-			infoLog("The vault is empty.")
+			info("The vault is empty.")
 		} else {
-			infoLog(fmt.Sprintf("No secrets match %q.", term))
+			info(fmt.Sprintf("No secrets match %q.", term))
 		}
 		return nil
 	}
@@ -193,8 +192,8 @@ func (c *CLI) printSecrets(ctx context.Context, term string, mode string) error 
 			strings.Repeat("-", pulledW),
 	)
 
-	plainLog(header)
-	plainLog(divider)
+	fmt.Fprint(stdout, header)
+	fmt.Fprint(stdout, divider)
 
 	for _, entry := range matched {
 		row := fmt.Sprintf(
@@ -205,7 +204,7 @@ func (c *CLI) printSecrets(ctx context.Context, term string, mode string) error 
 			versW, entry.Version,
 			pulledW, entry.ReadCount,
 		)
-		plainLog(row)
+		fmt.Fprint(stdout, row)
 	}
 	return nil
 }

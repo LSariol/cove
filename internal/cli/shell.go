@@ -1,4 +1,4 @@
-// Package cli is Cove's command line: the interactive `Cove CLI>` prompt, and
+// Package cli is Cove's command line: the interactive `cove>` prompt, and
 // one-shot commands such as `cove get KEY`.
 package cli
 
@@ -23,12 +23,17 @@ type Options struct {
 	// `cove`). Then `exit` stops the API server too; otherwise it only leaves
 	// the shell.
 	Embedded bool
+
+	// Env is the environment shown in the prompt, e.g. "dev" or "prod"
+	// (APP_ENV). Production is shown in red.
+	Env string
 }
 
 type CLI struct {
 	vault     *vault.Vault
 	bootstrap *bootstrap.Marker
 	embedded  bool
+	prompt    string
 
 	// scanner reads stdin for both the prompt and follow-up questions such as
 	// delete confirmations, so no input is lost between two readers.
@@ -46,6 +51,7 @@ func New(v *vault.Vault, marker *bootstrap.Marker, opts Options) *CLI {
 		vault:     v,
 		bootstrap: marker,
 		embedded:  opts.Embedded,
+		prompt:    promptFor(opts.Env),
 		scanner:   bufio.NewScanner(os.Stdin),
 		commands:  commandTable(opts.Embedded),
 		byName:    make(map[string]*command),
@@ -66,7 +72,7 @@ func (c *CLI) Run(ctx context.Context, stop func()) {
 	c.stop = stop
 
 	for ctx.Err() == nil {
-		fmt.Print("Cove CLI> ")
+		fmt.Fprint(stderr, c.prompt)
 		if !c.scanner.Scan() {
 			return
 		}
@@ -100,10 +106,10 @@ func report(err error) {
 
 	var usage usageError
 	if errors.As(err, &usage) {
-		warningLog(err.Error())
+		warn(err.Error())
 		return
 	}
-	errorLog(err.Error())
+	fail(err.Error())
 }
 
 // Report shows an error returned by Exec the same way the prompt does.

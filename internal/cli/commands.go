@@ -115,13 +115,13 @@ func (c *CLI) help(ctx context.Context, args []string) error {
 		}
 	}
 
-	infoLog("\n" + strings.TrimRight(b.String(), "\n"))
+	out(strings.TrimRight(b.String(), "\n"))
 	return nil
 }
 
 func (c *CLI) exit(ctx context.Context, args []string) error {
 	if c.embedded {
-		fmt.Println("Shutting down Cove...")
+		info("Shutting down Cove...")
 	}
 	if c.stop != nil {
 		c.stop()
