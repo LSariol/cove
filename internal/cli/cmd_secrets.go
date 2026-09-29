@@ -48,6 +48,15 @@ func (c *CLI) delete(ctx context.Context, args []string) error {
 	}
 	key := rest[0]
 
+	// The tokens keep the key, so a restored secret is reachable again.
+	listing, err := c.tokensListing(ctx, key)
+	if err != nil {
+		return err
+	}
+	if len(listing) > 0 {
+		warn(fmt.Sprintf("%s %q by name; those projects will get \"not found\".", tokensList(listing), key))
+	}
+
 	if !skipConfirm {
 		yes, answered := c.confirm(fmt.Sprintf("Delete %q? (y/N)", key))
 		if !answered {
@@ -87,12 +96,30 @@ func (c *CLI) update(ctx context.Context, args []string) error {
 }
 
 func (c *CLI) rename(ctx context.Context, args []string) error {
-	if len(args) != 3 {
-		return usageError{form: "rename <key> <new-key>"}
+	yes, rest := takeYesFlag(args[1:])
+	if len(rest) != 2 {
+		return usageError{form: "rename <key> <new-key> [--yes]"}
 	}
-	oldKey, newKey := args[1], args[2]
+	oldKey, newKey := rest[0], rest[1]
 
-	err := c.vault.Rename(ctx, oldKey, newKey, source)
+	// Tokens that list the key by name would lose it; offer to update them.
+	listing, err := c.tokensListing(ctx, oldKey)
+	if err != nil {
+		return err
+	}
+	if len(listing) > 0 && !yes {
+		warn(fmt.Sprintf("%s %q by name.", tokensList(listing), oldKey))
+		ok, answered := c.confirm("Rename it and update those tokens too? (y/N)")
+		if !answered {
+			return fmt.Errorf("Rename cancelled: no answer to the confirmation. Use --yes to rename and update the tokens without asking.")
+		}
+		if !ok {
+			info("Rename cancelled.")
+			return nil
+		}
+	}
+
+	err = c.vault.Rename(ctx, oldKey, newKey, source)
 	switch {
 	case errors.Is(err, vault.ErrNotFound):
 		return fmt.Errorf("No secret named %q.", oldKey)
@@ -103,8 +130,48 @@ func (c *CLI) rename(ctx context.Context, args []string) error {
 	}
 
 	success(fmt.Sprintf("Renamed %q to %q.", oldKey, newKey))
+
+	if len(listing) > 0 {
+		updated, err := c.tokens.RenameKey(ctx, oldKey, newKey, source)
+		if err != nil {
+			return fmt.Errorf("The secret was renamed, but its tokens couldn't be updated (%v). Run \"token allow %s %s\" to give them the new key.", err, newKey, strings.Join(listing, " "))
+		}
+		success(fmt.Sprintf("Updated %s to %q.", tokenOwners(updated), newKey))
+	}
+
 	warn(fmt.Sprintf("Apps still asking for %q will get \"not found\" until they use the new key.", oldKey))
 	return nil
+}
+
+// tokensListing returns the tokens that list key by name, or none when token
+// support isn't connected.
+func (c *CLI) tokensListing(ctx context.Context, key string) ([]string, error) {
+	if c.tokens == nil {
+		return nil, nil
+	}
+	names, err := c.tokens.Listing(ctx, key)
+	if err != nil {
+		return nil, fmt.Errorf("Couldn't check which tokens use %q: %v", key, err)
+	}
+	return names, nil
+}
+
+// tokensList starts a sentence about tokens that list a key: "marquee's
+// token lists", "botsuite and marquee's tokens list".
+func tokensList(names []string) string {
+	if len(names) == 1 {
+		return tokenOwners(names) + " lists"
+	}
+	return tokenOwners(names) + " list"
+}
+
+// tokenOwners describes tokens by their projects: "marquee's token",
+// "botsuite and marquee's tokens".
+func tokenOwners(names []string) string {
+	if len(names) == 1 {
+		return names[0] + "'s token"
+	}
+	return joinNames(names) + "'s tokens"
 }
 
 func (c *CLI) search(ctx context.Context, args []string) error {

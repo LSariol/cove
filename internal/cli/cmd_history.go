@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"strconv"
+	"strings"
 	"text/tabwriter"
 	"time"
 
@@ -40,7 +41,23 @@ func (c *CLI) info(ctx context.Context, args []string) error {
 	fmt.Fprintf(w, "Last read:\t%s\n", lastRead)
 	fmt.Fprintf(w, "Created:\t%s\n", formatTime(details.CreatedAt))
 	fmt.Fprintf(w, "Updated:\t%s\n", formatTime(details.UpdatedAt))
+	if c.tokens != nil {
+		readers, err := c.tokens.Readers(ctx, key)
+		if err != nil {
+			return fmt.Errorf("Couldn't check which tokens can read %q: %v", key, err)
+		}
+		fmt.Fprintf(w, "Readable by:\t%s\n", describeReaders(readers))
+	}
 	return w.Flush()
+}
+
+// describeReaders lists the project tokens that can read a secret. The master
+// token can always read everything, so it's mentioned last.
+func describeReaders(names []string) string {
+	if len(names) == 0 {
+		return "no project tokens (only the master token)"
+	}
+	return strings.Join(names, ", ") + " (and the master token)"
 }
 
 func (c *CLI) history(ctx context.Context, args []string) error {
