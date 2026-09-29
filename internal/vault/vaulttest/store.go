@@ -20,6 +20,7 @@ type Store struct {
 
 	// Events holds every logged event, in order.
 	Events []database.EventLogInput
+	times  []time.Time
 }
 
 func NewStore() *Store {
@@ -117,7 +118,50 @@ func (s *Store) LogEvent(ctx context.Context, logInfo database.EventLogInput) er
 	defer s.mu.Unlock()
 
 	s.Events = append(s.Events, logInfo)
+	s.times = append(s.times, time.Now())
 	return nil
+}
+
+func (s *Store) ListEvents(ctx context.Context, key string, limit int) ([]database.Event, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
+	var events []database.Event
+	for i := len(s.Events) - 1; i >= 0; i-- {
+		if s.Events[i].SecretKey != key {
+			continue
+		}
+		events = append(events, s.event(i))
+		if limit > 0 && len(events) == limit {
+			break
+		}
+	}
+	return events, nil
+}
+
+func (s *Store) LastEvent(ctx context.Context, key string, kind database.EventKind) (database.Event, bool, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
+	for i := len(s.Events) - 1; i >= 0; i-- {
+		if s.Events[i].SecretKey == key && s.Events[i].Kind == kind {
+			return s.event(i), true, nil
+		}
+	}
+	return database.Event{}, false, nil
+}
+
+// event converts logged event i. Call with s.mu held.
+func (s *Store) event(i int) database.Event {
+	e := s.Events[i]
+	return database.Event{
+		SecretKey:     e.SecretKey,
+		SecretVersion: e.SecretVersion,
+		Kind:          e.Kind,
+		Source:        e.Source,
+		Detail:        e.Detail,
+		OccurredAt:    s.times[i],
+	}
 }
 
 // EncryptedValue returns the stored (encrypted) value for key, for tests that

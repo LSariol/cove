@@ -34,6 +34,17 @@ type Store interface {
 	UpdateSecretValue(ctx context.Context, key string, encryptedValue string) (database.Secret, error)
 	DeleteSecret(ctx context.Context, key string) (database.Secret, error)
 	LogEvent(ctx context.Context, logInfo database.EventLogInput) error
+	ListEvents(ctx context.Context, key string, limit int) ([]database.Event, error)
+	LastEvent(ctx context.Context, key string, kind database.EventKind) (database.Event, bool, error)
+}
+
+// Event is one entry in a secret's history.
+type Event = database.Event
+
+// Info is a secret's details, without its value.
+type Info struct {
+	Secret
+	LastRead *Event // nil if it has never been read
 }
 
 // Secret is a secret as seen by callers. Value is plaintext, and is only set
@@ -207,6 +218,31 @@ func (v *Vault) Delete(ctx context.Context, key string, source string) error {
 	})
 
 	return nil
+}
+
+// History returns key's events, newest first; limit <= 0 returns them all. It
+// works for deleted secrets too, since the event log keeps their history.
+func (v *Vault) History(ctx context.Context, key string, limit int) ([]Event, error) {
+	return v.store.ListEvents(ctx, key, limit)
+}
+
+// Info returns a secret's details and when it was last read, without its value.
+func (v *Vault) Info(ctx context.Context, key string) (Info, error) {
+	s, err := v.store.GetSecret(ctx, key)
+	if err != nil {
+		return Info{}, err
+	}
+
+	info := Info{Secret: fromRow(s)}
+
+	lastRead, found, err := v.store.LastEvent(ctx, key, database.EventRead)
+	if err != nil {
+		return Info{}, err
+	}
+	if found {
+		info.LastRead = &lastRead
+	}
+	return info, nil
 }
 
 func fromRow(s database.Secret) Secret {

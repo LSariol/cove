@@ -84,6 +84,18 @@ func commandTable(embedded bool) []command {
 			run: (*CLI).list,
 		},
 		{
+			names:    []string{"info", "i"},
+			usages:   []usage{{forms: []string{"<key>"}, help: "Shows a secret's details and when it was last read. Never shows the value."}},
+			run:      (*CLI).info,
+			complete: (*CLI).keyNames,
+		},
+		{
+			names:    []string{"history"},
+			usages:   []usage{{forms: []string{"<key> [count]"}, help: "Shows a secret's recent events (default 20): created, read, updated, deleted,\n      and by which app. Works for deleted secrets too. Never shows values."}},
+			run:      (*CLI).history,
+			complete: (*CLI).keyNames,
+		},
+		{
 			names:  []string{"search", "s"},
 			usages: []usage{{forms: []string{"<text>"}, help: "Lists secrets whose keys contain <text> (not case-sensitive)."}},
 			run:    (*CLI).search,
