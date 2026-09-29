@@ -36,7 +36,7 @@ func TestLoadReportsParseErrors(t *testing.T) {
 	if err == nil {
 		t.Fatal("Load succeeded on an invalid .env")
 	}
-	if !strings.Contains(err.Error(), "load .env") || strings.Contains(err.Error(), "no .env file found") {
+	if !strings.Contains(err.Error(), "can't read .env") || strings.Contains(err.Error(), "no .env file found") {
 		t.Fatalf("Load error = %q, want the parse error for .env", err)
 	}
 }

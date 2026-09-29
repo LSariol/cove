@@ -60,7 +60,7 @@ func main() {
 	// Migrations only run when the migrator connection is configured.
 	if cfg.MigrateDatabaseURL != "" {
 		if err := database.Migrate(ctx, cfg.MigrateDatabaseURL); err != nil {
-			fatal(fmt.Errorf("migrate database: %w", err))
+			fatal(err)
 		}
 	}
 
@@ -68,11 +68,11 @@ func main() {
 
 	err = db.Connect(ctx)
 	if err != nil {
-		fatal(fmt.Errorf("connect to database: %w", err))
+		fatal(err)
 	}
 
 	if err := db.CheckSchemaVersion(ctx); err != nil {
-		fatal(fmt.Errorf("check database schema: %w", err))
+		fatal(err)
 	}
 
 	v := vault.New(db, encryption.NewCipher(cfg.EncryptionKey))
@@ -90,7 +90,7 @@ func main() {
 	cli.StartCLI(ctx)
 
 	<-ctx.Done()
-	log.Println("Shutting Down...")
+	log.Println("Shutting down.")
 }
 
 // buildVersion returns version, or for an unstamped local build, "dev" plus the
@@ -113,7 +113,7 @@ func buildVersion() string {
 // runMigrate handles `cove migrate [status|up]` using COVE_MIGRATE_DATABASE_URL.
 func runMigrate(cfg config.Config, args []string) {
 	if cfg.MigrateDatabaseURL == "" {
-		fmt.Fprintln(os.Stderr, "COVE_MIGRATE_DATABASE_URL is not set")
+		fmt.Fprintln(os.Stderr, "cove migrate: COVE_MIGRATE_DATABASE_URL is not set. Set it to the cove_migrator connection string.")
 		os.Exit(1)
 	}
 
@@ -131,12 +131,12 @@ func runMigrate(cfg config.Config, args []string) {
 	case "up":
 		err = database.Migrate(ctx, cfg.MigrateDatabaseURL)
 	default:
-		fmt.Fprintf(os.Stderr, "unknown migrate command %q (use: status, up)\n", command)
+		fmt.Fprintf(os.Stderr, "cove migrate: unknown command %q. Use \"status\" or \"up\".\n", command)
 		os.Exit(2)
 	}
 
 	if err != nil {
-		fmt.Fprintln(os.Stderr, err)
+		fmt.Fprintf(os.Stderr, "cove migrate: %v\n", err)
 		os.Exit(1)
 	}
 }

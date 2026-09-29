@@ -4,11 +4,13 @@ import (
 	"context"
 	"database/sql"
 	"embed"
+	"errors"
 	"fmt"
 	"io"
 	"io/fs"
 	"log"
 
+	"github.com/jackc/pgx/v5/pgconn"
 	_ "github.com/jackc/pgx/v5/stdlib"
 	"github.com/pressly/goose/v3"
 	"github.com/pressly/goose/v3/lock"
@@ -16,6 +18,9 @@ import (
 
 //go:embed migrations/*.sql
 var embeddedMigrations embed.FS
+
+// undefinedTable is Postgres's error code for a missing table.
+const undefinedTable = "42P01"
 
 // migrationsTable is where goose records applied migrations. It lives in the
 // cove schema so everything Cove owns stays in one place.
@@ -76,14 +81,20 @@ func (d *Database) CheckSchemaVersion(ctx context.Context) error {
 		return err
 	}
 
+	const fix = "set COVE_MIGRATE_DATABASE_URL so Cove applies them on startup, or run `cove migrate up`"
+
 	var have int64
 	const query = `SELECT COALESCE(MAX(version_id), 0) FROM cove.goose_db_version WHERE is_applied`
 	if err := d.Pool.QueryRow(ctx, query).Scan(&have); err != nil {
-		return fmt.Errorf("read schema version (has the database been migrated? set COVE_MIGRATE_DATABASE_URL): %w", err)
+		var pgErr *pgconn.PgError
+		if errors.As(err, &pgErr) && pgErr.Code == undefinedTable {
+			return fmt.Errorf("the database hasn't been migrated yet: %s", fix)
+		}
+		return fmt.Errorf("can't read the database schema version: %w", err)
 	}
 
 	if have < want {
-		return fmt.Errorf("database schema is at version %d but this build needs %d: set COVE_MIGRATE_DATABASE_URL to apply migrations", have, want)
+		return fmt.Errorf("the database schema is at version %d, but this version of Cove needs %d. Migrations are missing: %s", have, want, fix)
 	}
 	return nil
 }
@@ -98,7 +109,7 @@ func newMigrationProvider(ctx context.Context, connString string) (*goose.Provid
 	// schema that holds it has to exist first.
 	if _, err := db.ExecContext(ctx, "CREATE SCHEMA IF NOT EXISTS cove"); err != nil {
 		db.Close()
-		return nil, nil, fmt.Errorf("create cove schema: %w", err)
+		return nil, nil, fmt.Errorf("prepare migrations with COVE_MIGRATE_DATABASE_URL: %w", err)
 	}
 
 	fsys, err := fs.Sub(embeddedMigrations, "migrations")

@@ -52,12 +52,12 @@ func Load() (Config, error) {
 		}
 
 		if err := godotenv.Load(path); err != nil {
-			return Config{}, fmt.Errorf("load %s: %w", path, err)
+			return Config{}, fmt.Errorf("can't read %s: %w (each line must be NAME=value)", path, err)
 		}
 		return fromEnv(path), nil
 	}
 
-	return Config{}, fmt.Errorf("no .env file found (looked for %s)", strings.Join(candidates, ", "))
+	return Config{}, fmt.Errorf("no .env file found (looked for %s). Copy .env.example to .env to get started", strings.Join(candidates, ", "))
 }
 
 // fromEnv reads the Config from environment variables. envFile is the .env
@@ -92,10 +92,10 @@ func fromEnv(envFile string) Config {
 // Ensure, which fills in missing secrets.
 func (c Config) Validate() error {
 	if c.DatabaseURL == "" {
-		return errors.New("COVE_DATABASE_URL is not set")
+		return errors.New("COVE_DATABASE_URL is not set. Set it to the cove_app connection string, e.g. postgres://cove_app:password@host:5432/cove_db")
 	}
 	if c.Port == "" {
-		return errors.New("APP_PORT is not set")
+		return errors.New("APP_PORT is not set. Set it to the port the API should listen on, e.g. 2100")
 	}
 	if len(c.ClientSecret) < minSecretLength {
 		return fmt.Errorf("COVE_CLIENT_SECRET is too short (%d characters, need at least %d). "+
@@ -124,7 +124,7 @@ func Store(path string, key string, value string) error {
 
 	envs, err := godotenv.Read(path)
 	if err != nil && !errors.Is(err, fs.ErrNotExist) {
-		return fmt.Errorf("read %s: %w", path, err)
+		return fmt.Errorf("can't parse %s, so it was left unchanged: %w", path, err)
 	}
 	if envs == nil {
 		envs = make(map[string]string)

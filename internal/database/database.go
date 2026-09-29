@@ -6,7 +6,6 @@ package database
 import (
 	"context"
 	"fmt"
-	"os"
 	"time"
 
 	"github.com/jackc/pgx/v5/pgxpool"
@@ -25,20 +24,20 @@ func New(connString string) *Database {
 	}
 }
 
-// Connect opens a pgxpool connection and validates it with Ping
+// Connect opens a pgxpool connection and validates it with Ping. Errors name
+// COVE_DATABASE_URL, since that's what needs fixing.
 func (d *Database) Connect(ctx context.Context) error {
 
 	pool, err := pgxpool.New(ctx, d.ConnString)
 	if err != nil {
-		fmt.Fprintf(os.Stderr, "Unable to connect to database: %v\n", err)
-		os.Exit(1)
+		return fmt.Errorf("COVE_DATABASE_URL is not a valid connection string: %w", err)
 	}
 
 	pingCtx, cancel := context.WithTimeout(ctx, 3*time.Second)
 	defer cancel()
 	if err := pool.Ping(pingCtx); err != nil {
 		pool.Close()
-		return fmt.Errorf("ping database: %w", err)
+		return fmt.Errorf("can't reach the database at COVE_DATABASE_URL: %w", err)
 	}
 
 	d.Pool = pool
