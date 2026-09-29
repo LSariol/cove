@@ -46,16 +46,7 @@ func (c *CLI) delete(ctx context.Context, args []string) error {
 	}
 	key := args[1]
 
-	ask(fmt.Sprintf("Delete %q? (y/N)", key))
-
-	if !c.scanner.Scan() {
-		info("Delete cancelled.")
-		return nil
-	}
-
-	response := strings.ToLower(strings.TrimSpace(c.scanner.Text()))
-
-	if response != "y" && response != "yes" {
+	if !c.confirm(fmt.Sprintf("Delete %q? (y/N)", key)) {
 		info("Delete cancelled.")
 		return nil
 	}

@@ -13,6 +13,10 @@ type command struct {
 	names  []string // first is the primary name, the rest are aliases
 	usages []usage
 	run    func(c *CLI, ctx context.Context, args []string) error
+
+	// complete returns the Tab-completion candidates for the command's first
+	// argument, or is nil when it has none.
+	complete func(c *CLI) []string
 }
 
 // usage is one way to call a command, shown by `help`.
@@ -49,9 +53,10 @@ func commandTable(embedded bool) []command {
 			run:    (*CLI).exit,
 		},
 		{
-			names:  []string{"get", "g"},
-			usages: []usage{{forms: []string{"<key>"}, help: "Shows the decrypted value of a secret."}},
-			run:    (*CLI).get,
+			names:    []string{"get", "g"},
+			usages:   []usage{{forms: []string{"<key>"}, help: "Shows the decrypted value of a secret."}},
+			run:      (*CLI).get,
+			complete: (*CLI).keyNames,
 		},
 		{
 			names:  []string{"create", "c"},
@@ -59,14 +64,16 @@ func commandTable(embedded bool) []command {
 			run:    (*CLI).create,
 		},
 		{
-			names:  []string{"delete", "d"},
-			usages: []usage{{forms: []string{"<key>"}, help: "Deletes a secret (asks for confirmation)."}},
-			run:    (*CLI).delete,
+			names:    []string{"delete", "d"},
+			usages:   []usage{{forms: []string{"<key>"}, help: "Deletes a secret (asks for confirmation)."}},
+			run:      (*CLI).delete,
+			complete: (*CLI).keyNames,
 		},
 		{
-			names:  []string{"update", "u"},
-			usages: []usage{{forms: []string{"<key> <value>"}, help: "Replaces a secret's value and increases its version."}},
-			run:    (*CLI).update,
+			names:    []string{"update", "u"},
+			usages:   []usage{{forms: []string{"<key> <value>"}, help: "Replaces a secret's value and increases its version."}},
+			run:      (*CLI).update,
+			complete: (*CLI).keyNames,
 		},
 		{
 			names: []string{"list", "l"},
@@ -84,12 +91,14 @@ func commandTable(embedded bool) []command {
 					"      can fetch the client token without credentials. It locks again after one use."},
 				{forms: []string{"lock"}, help: "Locks the bootstrap endpoint without it being used."},
 			},
-			run: (*CLI).bootstrapCmd,
+			run:      (*CLI).bootstrapCmd,
+			complete: func(*CLI) []string { return []string{"clear", "lock"} },
 		},
 		{
-			names:  []string{"help", "h"},
-			usages: []usage{{help: "Shows this help."}},
-			run:    (*CLI).help,
+			names:    []string{"help", "h"},
+			usages:   []usage{{help: "Shows this help."}},
+			run:      (*CLI).help,
+			complete: (*CLI).commandNames,
 		},
 	}
 }

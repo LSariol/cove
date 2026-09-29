@@ -12,6 +12,7 @@ import (
 
 	"github.com/LSariol/Cove/internal/bootstrap"
 	"github.com/LSariol/Cove/internal/vault"
+	"golang.org/x/term"
 )
 
 // source is recorded in the event log for everything done through the CLI.
@@ -36,8 +37,10 @@ type CLI struct {
 	prompt    string
 
 	// scanner reads stdin for both the prompt and follow-up questions such as
-	// delete confirmations, so no input is lost between two readers.
+	// delete confirmations, so no input is lost between two readers. When the
+	// shell has line editing, term is used instead.
 	scanner *bufio.Scanner
+	term    *term.Terminal
 
 	commands []command
 	byName   map[string]*command
@@ -68,8 +71,16 @@ func New(v *vault.Vault, marker *bootstrap.Marker, opts Options) *CLI {
 
 // Run reads and runs commands until stdin closes, `exit` is typed, or ctx is
 // cancelled. `exit` calls stop.
+//
+// A standalone shell on a terminal gets line editing and Tab completion. The
+// CLI embedded in the server keeps plain line input, so Ctrl+C there still
+// stops Cove as a signal.
 func (c *CLI) Run(ctx context.Context, stop func()) {
 	c.stop = stop
+
+	if !c.embedded && term.IsTerminal(int(os.Stdin.Fd())) && c.runTerminal(ctx) {
+		return
+	}
 
 	for ctx.Err() == nil {
 		fmt.Fprint(stderr, c.prompt)
@@ -115,4 +126,29 @@ func report(err error) {
 // Report shows an error returned by Exec the same way the prompt does.
 func Report(err error) {
 	report(err)
+}
+
+// confirm asks a yes/no question and reports whether the answer was yes. With
+// line editing the question becomes the prompt for the answer.
+func (c *CLI) confirm(question string) bool {
+	var answer string
+
+	if c.term != nil {
+		c.term.SetPrompt(colorize(yellow, "? "+question) + " ")
+		line, err := c.term.ReadLine()
+		c.term.SetPrompt(c.prompt)
+		if err != nil {
+			return false
+		}
+		answer = line
+	} else {
+		ask(question)
+		if !c.scanner.Scan() {
+			return false
+		}
+		answer = c.scanner.Text()
+	}
+
+	answer = strings.ToLower(strings.TrimSpace(answer))
+	return answer == "y" || answer == "yes"
 }
