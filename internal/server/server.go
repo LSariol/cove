@@ -26,7 +26,7 @@ type Options struct {
 
 type Server struct {
 	vault        *vault.Vault
-	bootstrap    *bootstrap.Marker
+	bootstrap    *bootstrap.Gate
 	db           Pinger
 	clientSecret string
 	port         string
@@ -34,10 +34,10 @@ type Server struct {
 }
 
 // New returns a Server. db is used by the readiness check.
-func New(v *vault.Vault, marker *bootstrap.Marker, db Pinger, opts Options) *Server {
+func New(v *vault.Vault, gate *bootstrap.Gate, db Pinger, opts Options) *Server {
 	return &Server{
 		vault:        v,
-		bootstrap:    marker,
+		bootstrap:    gate,
 		db:           db,
 		clientSecret: opts.ClientSecret,
 		port:         opts.Port,

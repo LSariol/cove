@@ -20,7 +20,7 @@ func (p *fakePinger) Ping(ctx context.Context) error {
 func TestReadyReflectsDatabase(t *testing.T) {
 	db := &fakePinger{}
 	mux := http.NewServeMux()
-	New(nil, bootstrap.NewMarker(t.TempDir()), db, Options{ClientSecret: testToken, Port: "0"}).defineRoutes(mux)
+	New(nil, bootstrap.NewGate(t.TempDir(), nil), db, Options{ClientSecret: testToken, Port: "0"}).defineRoutes(mux)
 	api := &testAPI{t: t, handler: mux}
 
 	code, env := api.do("GET", "/v0/ready", "")

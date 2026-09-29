@@ -62,15 +62,12 @@ func (c *CLI) status(ctx context.Context, args []string) error {
 	}
 
 	if c.bootstrap != nil {
-		locked, err := c.bootstrap.Locked()
-		switch {
-		case err != nil:
+		st, err := c.bootstrap.Status()
+		if err != nil {
 			rows = append(rows, [2]string{"Bootstrap", "unknown"})
-			problems = append(problems, fmt.Sprintf("the bootstrap marker couldn't be checked (%v)", err))
-		case locked:
-			rows = append(rows, [2]string{"Bootstrap", "locked"})
-		default:
-			rows = append(rows, [2]string{"Bootstrap", "open (the next request to /v0/bootstrap/lighthouse gets the client token)"})
+			problems = append(problems, fmt.Sprintf("the bootstrap state couldn't be read (%v)", err))
+		} else {
+			rows = append(rows, [2]string{"Bootstrap", describeBootstrap(st)})
 		}
 	}
 

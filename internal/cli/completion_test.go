@@ -27,7 +27,7 @@ func TestTabCompletion(t *testing.T) {
 		{"get LIGH", "get LIGHTHOUSE_GITHUB_PAT "}, // single key match
 		{"get MY", "get MYAPP_"},                   // common prefix of two keys
 		{"delete MYAPP_D", "delete MYAPP_DB_URL "}, // other key commands
-		{"bootstrap c", "bootstrap clear "},        // fixed options
+		{"bootstrap o", "bootstrap open "},         // fixed options
 		{"help up", "help update "},                // command names for help
 		{"create MY", ""},                          // create takes a new key: no completion
 		{"get NOPE", ""},                           // no match

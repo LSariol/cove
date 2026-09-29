@@ -26,7 +26,7 @@ func newStatusCLI(t *testing.T, db *fakeDB) *CLI {
 	t.Helper()
 	v := vault.New(vaulttest.NewStore(), encryption.NewCipher("test-vault-key"))
 	_ = v.Create(context.Background(), "a.key", "x", "test")
-	return New(v, bootstrap.NewMarker(t.TempDir()), Options{Env: "PROD", Version: "v1.0.0", DB: db})
+	return New(v, bootstrap.NewGate(t.TempDir(), nil), Options{Env: "PROD", Version: "v1.0.0", DB: db})
 }
 
 func TestStatusHealthy(t *testing.T) {
@@ -36,7 +36,7 @@ func TestStatusHealthy(t *testing.T) {
 	if err := c.Exec(context.Background(), []string{"status"}); err != nil {
 		t.Fatalf("healthy status returned %v", err)
 	}
-	for _, want := range []string{"v1.0.0", "prod", "reachable", "version 6 (up to date)", "Secrets:", "1", "open"} {
+	for _, want := range []string{"v1.0.0", "prod", "reachable", "version 6 (up to date)", "Secrets:", "1", "closed"} {
 		if !strings.Contains(o.String(), want) {
 			t.Errorf("status is missing %q:\n%s", want, o.String())
 		}
@@ -57,16 +57,5 @@ func TestStatusReportsProblems(t *testing.T) {
 	}
 	if !strings.Contains(o.String(), "unreachable") {
 		t.Errorf("status output = %s", o.String())
-	}
-}
-
-func TestMarkerLocked(t *testing.T) {
-	m := bootstrap.NewMarker(t.TempDir())
-	if locked, err := m.Locked(); err != nil || locked {
-		t.Fatalf("fresh marker: locked=%v err=%v", locked, err)
-	}
-	_ = m.Lock()
-	if locked, _ := m.Locked(); !locked {
-		t.Fatal("marker not reported locked after Lock")
 	}
 }

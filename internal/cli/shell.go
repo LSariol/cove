@@ -36,7 +36,7 @@ type Options struct {
 
 type CLI struct {
 	vault     *vault.Vault
-	bootstrap *bootstrap.Marker
+	bootstrap *bootstrap.Gate
 	embedded  bool
 	prompt    string
 	env       string
@@ -56,10 +56,10 @@ type CLI struct {
 	stop func()
 }
 
-func New(v *vault.Vault, marker *bootstrap.Marker, opts Options) *CLI {
+func New(v *vault.Vault, gate *bootstrap.Gate, opts Options) *CLI {
 	c := &CLI{
 		vault:     v,
-		bootstrap: marker,
+		bootstrap: gate,
 		embedded:  opts.Embedded,
 		prompt:    promptFor(opts.Env),
 		env:       opts.Env,

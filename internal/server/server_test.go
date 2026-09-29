@@ -21,16 +21,18 @@ const testToken = "test-client-secret-0123456789"
 type testAPI struct {
 	t       *testing.T
 	handler http.Handler
+	gate    *bootstrap.Gate
 }
 
 func newTestAPI(t *testing.T) *testAPI {
 	t.Helper()
 	v := vault.New(vaulttest.NewStore(), encryption.NewCipher("test-vault-key"))
-	s := New(v, bootstrap.NewMarker(t.TempDir()), &fakePinger{}, Options{ClientSecret: testToken, Port: "0", Version: "v9.9.9"})
+	gate := bootstrap.NewGate(t.TempDir(), nil)
+	s := New(v, gate, &fakePinger{}, Options{ClientSecret: testToken, Port: "0", Version: "v9.9.9"})
 
 	mux := http.NewServeMux()
 	s.defineRoutes(mux)
-	return &testAPI{t: t, handler: mux}
+	return &testAPI{t: t, handler: mux, gate: gate}
 }
 
 type envelope struct {
@@ -194,14 +196,25 @@ func TestListReturnsMetadataOnly(t *testing.T) {
 	}
 }
 
-func TestBootstrapHandsOutTokenOnce(t *testing.T) {
+func TestBootstrapIsClosedUntilOpened(t *testing.T) {
 	api := newTestAPI(t)
 
 	code, env := api.do("GET", "/v0/bootstrap/lighthouse", "")
+	expectError(t, code, env, 403, "bootstrap_locked")
+
+	if _, err := api.gate.Open(0); err != nil {
+		t.Fatal(err)
+	}
+	code, env = api.do("GET", "/v0/bootstrap/lighthouse", "")
 	if code != 200 || decode[map[string]string](t, env)["secret"] != testToken {
-		t.Fatalf("first bootstrap = %d %s", code, env.Data)
+		t.Fatalf("bootstrap while open = %d %s", code, env.Data)
 	}
 
+	// httptest requests all come from the same address, so a second request
+	// falls in the grace period; the gate's own tests cover other addresses.
+	if err := api.gate.Lock(); err != nil {
+		t.Fatal(err)
+	}
 	code, env = api.do("GET", "/v0/bootstrap/lighthouse", "")
 	expectError(t, code, env, 403, "bootstrap_locked")
 }
