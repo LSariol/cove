@@ -16,15 +16,9 @@ func (s *Server) bootstrapHandler(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	if s.clientSecret == "" {
-		log.Printf("bootstrap: COVE_CLIENT_SECRET is not configured")
-		writeError(w, http.StatusInternalServerError, "server_error", "client secret is not configured")
-		return
-	}
-
 	addr := remoteAddr(r)
 
-	outcome, err := s.bootstrap.Claim(addr)
+	outcome, handout, err := s.bootstrap.Claim(addr)
 	if err != nil {
 		log.Printf("bootstrap: request from %s failed: %v", addr, err)
 		s.recordBootstrap(r, addr, "error")
@@ -33,11 +27,17 @@ func (s *Server) bootstrapHandler(w http.ResponseWriter, r *http.Request) {
 	}
 	s.recordBootstrap(r, addr, string(outcome))
 
+	// A project's token, or the master token.
+	token, what := handout.Token, handout.TokenName+"'s token"
+	if token == "" {
+		token, what = s.clientSecret, "the master token"
+	}
+
 	switch outcome {
 	case bootstrap.Granted:
-		log.Printf("bootstrap: handed the client token to %s; the endpoint is now closed", addr)
+		log.Printf("bootstrap: handed %s to %s; the endpoint is now closed", what, addr)
 	case bootstrap.Redelivered:
-		log.Printf("bootstrap: handed the client token to %s again (within the grace period)", addr)
+		log.Printf("bootstrap: handed %s to %s again (within the grace period)", what, addr)
 	case bootstrap.Expired:
 		log.Printf("bootstrap: refused %s (the window expired)", addr)
 		writeError(w, http.StatusForbidden, "bootstrap_expired", "the bootstrap window expired before it was used; open it again with `bootstrap open` in the Cove CLI")
@@ -52,9 +52,15 @@ func (s *Server) bootstrapHandler(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	if token == "" {
+		log.Printf("bootstrap: COVE_CLIENT_SECRET is not configured")
+		writeError(w, http.StatusInternalServerError, "server_error", "client secret is not configured")
+		return
+	}
+
 	writeResponse(w, http.StatusOK, struct {
 		Secret string `json:"secret"`
-	}{Secret: s.clientSecret})
+	}{Secret: token})
 }
 
 // recordBootstrap writes the attempt to cove.bootstrap_log. A failure is only

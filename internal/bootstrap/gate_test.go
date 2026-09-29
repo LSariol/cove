@@ -29,7 +29,7 @@ var (
 
 func claim(t *testing.T, g *Gate, addr netip.Addr) Outcome {
 	t.Helper()
-	outcome, err := g.Claim(addr)
+	outcome, _, err := g.Claim(addr)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -163,7 +163,7 @@ func TestCorruptStateFailsClosed(t *testing.T) {
 	if err := os.WriteFile(filepath.Join(g.dir, stateFile), []byte("{not json"), 0o600); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := g.Claim(lighthouse); err == nil {
+	if _, _, err := g.Claim(lighthouse); err == nil {
 		t.Fatal("Claim with a corrupt state file succeeded")
 	}
 }

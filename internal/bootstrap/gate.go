@@ -1,5 +1,6 @@
-// Package bootstrap controls the one-time bootstrap endpoint, which hands the
-// client token to a new client that has no credentials yet (e.g. Lighthouse).
+// Package bootstrap controls the one-time bootstrap endpoint, which hands a
+// token to a new client that has no credentials yet (e.g. Lighthouse): the
+// master token, or when opened for a project, that project's own token.
 //
 // The endpoint is closed unless someone opens it with `bootstrap open`, and
 // then only for a limited time: it closes after one successful handout, or
@@ -55,6 +56,14 @@ type Status struct {
 	LastHandoutTo string
 	GraceUntil    time.Time
 	Allowed       []netip.Prefix // empty means any address
+	TokenName     string         // the project whose token is handed out; empty for the master token
+}
+
+// Handout is what a granted request receives: a project's token, or the
+// master token when Token is empty.
+type Handout struct {
+	TokenName string
+	Token     string
 }
 
 // state is what's saved in the state file.
@@ -63,6 +72,11 @@ type state struct {
 	LastHandoutAt time.Time `json:"last_handout_at,omitzero"`
 	LastHandoutTo string    `json:"last_handout_to,omitzero"`
 	GraceUntil    time.Time `json:"grace_until,omitzero"`
+
+	// A project token to hand out instead of the master token. It's kept
+	// only until the window and grace period are over, then removed.
+	TokenName string `json:"token_name,omitzero"`
+	Token     string `json:"token,omitzero"`
 }
 
 // Gate decides whether a bootstrap request may receive the client token. Its
@@ -81,9 +95,16 @@ func NewGate(dir string, allowed []netip.Prefix) *Gate {
 	return &Gate{dir: dir, allowed: allowed, now: time.Now}
 }
 
-// Open opens the endpoint for d (DefaultWindow if d <= 0) and returns when it
-// will close.
+// Open opens the endpoint for d (DefaultWindow if d <= 0) to hand out the
+// master token, and returns when it will close.
 func (g *Gate) Open(d time.Duration) (time.Time, error) {
+	return g.OpenFor(d, "", "")
+}
+
+// OpenFor opens the endpoint for d (DefaultWindow if d <= 0) to hand out
+// token, the named project's token, and returns when it will close. An empty
+// token means the master token.
+func (g *Gate) OpenFor(d time.Duration, tokenName string, token string) (time.Time, error) {
 	if d <= 0 {
 		d = DefaultWindow
 	}
@@ -96,6 +117,8 @@ func (g *Gate) Open(d time.Duration) (time.Time, error) {
 		return time.Time{}, err
 	}
 	st.OpenUntil = g.now().Add(d)
+	st.GraceUntil = time.Time{} // the previous handout can't be fetched again
+	st.TokenName, st.Token = tokenName, token
 	return st.OpenUntil, g.save(st)
 }
 
@@ -110,6 +133,7 @@ func (g *Gate) Lock() error {
 	}
 	st.OpenUntil = time.Time{}
 	st.GraceUntil = time.Time{}
+	st.TokenName, st.Token = "", ""
 	return g.save(st)
 }
 
@@ -125,6 +149,9 @@ func (g *Gate) Status() (Status, error) {
 	}
 
 	now := g.now()
+	if err := g.scrub(&st, now); err != nil {
+		return Status{}, err
+	}
 	return Status{
 		Open:          now.Before(st.OpenUntil),
 		OpenUntil:     st.OpenUntil,
@@ -133,15 +160,26 @@ func (g *Gate) Status() (Status, error) {
 		LastHandoutTo: st.LastHandoutTo,
 		GraceUntil:    st.GraceUntil,
 		Allowed:       g.allowed,
+		TokenName:     st.TokenName,
 	}, nil
 }
 
+// scrub removes a project token from the state once nobody can receive it any
+// more: the window is over and so is the grace period. It saves the change.
+func (g *Gate) scrub(st *state, now time.Time) error {
+	if st.Token == "" || now.Before(st.OpenUntil) || now.Before(st.GraceUntil) {
+		return nil
+	}
+	st.Token = ""
+	return g.save(*st)
+}
+
 // Claim decides a request from addr. Granted and Redelivered mean the caller
-// may receive the token; a grant also closes the endpoint and starts the
+// may receive the Handout; a grant also closes the endpoint and starts the
 // grace period for addr.
-func (g *Gate) Claim(addr netip.Addr) (Outcome, error) {
+func (g *Gate) Claim(addr netip.Addr) (Outcome, Handout, error) {
 	if !g.isAllowed(addr) {
-		return Forbidden, nil
+		return Forbidden, Handout{}, nil
 	}
 
 	g.mu.Lock()
@@ -149,10 +187,11 @@ func (g *Gate) Claim(addr netip.Addr) (Outcome, error) {
 
 	st, err := g.load()
 	if err != nil {
-		return "", err
+		return "", Handout{}, err
 	}
 
 	now := g.now()
+	handout := Handout{TokenName: st.TokenName, Token: st.Token}
 	switch {
 	case now.Before(st.OpenUntil):
 		st.OpenUntil = time.Time{}
@@ -160,19 +199,21 @@ func (g *Gate) Claim(addr netip.Addr) (Outcome, error) {
 		st.LastHandoutTo = addr.String()
 		st.GraceUntil = now.Add(GracePeriod)
 		if err := g.save(st); err != nil {
-			return "", err
+			return "", Handout{}, err
 		}
-		return Granted, nil
+		return Granted, handout, nil
 
 	case addr.String() == st.LastHandoutTo && now.Before(st.GraceUntil):
-		return Redelivered, nil
-
-	case !st.OpenUntil.IsZero():
-		return Expired, nil
-
-	default:
-		return Locked, nil
+		return Redelivered, handout, nil
 	}
+
+	if err := g.scrub(&st, now); err != nil {
+		return "", Handout{}, err
+	}
+	if !st.OpenUntil.IsZero() {
+		return Expired, Handout{}, nil
+	}
+	return Locked, Handout{}, nil
 }
 
 func (g *Gate) isAllowed(addr netip.Addr) bool {

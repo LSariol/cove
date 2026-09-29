@@ -2,12 +2,14 @@ package cli
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"strings"
 	"text/tabwriter"
 	"time"
 
 	"github.com/LSariol/Cove/internal/bootstrap"
+	"github.com/LSariol/Cove/internal/tokens"
 )
 
 const (
@@ -16,7 +18,7 @@ const (
 )
 
 func (c *CLI) bootstrapCmd(ctx context.Context, args []string) error {
-	const form = "bootstrap [open [duration] | lock | status]"
+	const form = "bootstrap [open [project] [duration] | lock | status]"
 
 	if len(args) == 1 {
 		return c.bootstrapStatus(ctx)
@@ -25,23 +27,34 @@ func (c *CLI) bootstrapCmd(ctx context.Context, args []string) error {
 	switch strings.ToLower(args[1]) {
 	case "open", "clear": // clear is the v0.2.0 name
 		window := bootstrap.DefaultWindow
-		if len(args) == 3 {
-			d, err := time.ParseDuration(args[2])
-			if err != nil || d < minBootstrapWindow || d > maxBootstrapWindow {
-				return usageError{reason: fmt.Sprintf("%q isn't a duration from 1m to 24h (e.g. 10m, 1h).", args[2]), form: form}
-			}
-			window = d
-		} else if len(args) > 3 {
+		project := ""
+		if len(args) > 4 {
 			return usageError{form: form}
 		}
-
-		until, err := c.bootstrap.Open(window)
-		if err != nil {
-			return fmt.Errorf("Couldn't open the bootstrap endpoint: %v", err)
+		for _, arg := range args[2:] {
+			if d, err := time.ParseDuration(arg); err == nil {
+				if d < minBootstrapWindow || d > maxBootstrapWindow {
+					return usageError{reason: fmt.Sprintf("%q isn't a duration from 1m to 24h (e.g. 10m, 1h).", arg), form: form}
+				}
+				window = d
+				continue
+			}
+			if project != "" || c.tokens == nil {
+				return usageError{reason: fmt.Sprintf("%q isn't a duration from 1m to 24h (e.g. 10m, 1h).", arg), form: form}
+			}
+			project = arg
 		}
-		success(fmt.Sprintf("Bootstrap endpoint open until %s (%s). It closes after one successful handout.",
-			until.Local().Format("15:04"), window))
-		return nil
+
+		if project == "" {
+			until, err := c.bootstrap.Open(window)
+			if err != nil {
+				return fmt.Errorf("Couldn't open the bootstrap endpoint: %v", err)
+			}
+			success(fmt.Sprintf("Bootstrap endpoint open until %s (%s) to hand out the master token. It closes after one successful handout.",
+				until.Local().Format("15:04"), window))
+			return nil
+		}
+		return c.bootstrapOpenFor(ctx, project, window)
 
 	case "lock":
 		if len(args) != 2 {
@@ -74,6 +87,7 @@ func (c *CLI) bootstrapStatus(ctx context.Context) error {
 	}
 
 	out("Endpoint:      " + describeBootstrap(st))
+	out("Hands out:     " + describeHandout(st))
 
 	lastHandout := "never"
 	if !st.LastHandoutAt.IsZero() {
@@ -110,6 +124,40 @@ func (c *CLI) bootstrapStatus(ctx context.Context) error {
 		fmt.Fprintf(w, "  %s\t%s\t%s\n", formatTime(a.OccurredAt), a.RemoteAddr, a.Outcome)
 	}
 	return w.Flush()
+}
+
+// bootstrapOpenFor opens the endpoint to hand out a project's own token. Only
+// a hash of each token is stored, so the project gets a new one: its current
+// token stops working.
+func (c *CLI) bootstrapOpenFor(ctx context.Context, project string, window time.Duration) error {
+	if _, err := c.tokens.Get(ctx, project); err != nil {
+		if errors.Is(err, tokens.ErrNotFound) {
+			return fmt.Errorf("No token named %q. Create it first: token create %s --allow '%s.*'", project, project, project)
+		}
+		return fmt.Errorf("Couldn't read %s's token: %v", project, err)
+	}
+
+	value, err := c.tokens.Rotate(ctx, project, source, "for bootstrap")
+	if err != nil {
+		return fmt.Errorf("Couldn't prepare a new token for %s: %v", project, err)
+	}
+	until, err := c.bootstrap.OpenFor(window, project, value)
+	if err != nil {
+		return fmt.Errorf("Couldn't open the bootstrap endpoint (%s's token was already replaced; run this again): %v", project, err)
+	}
+
+	success(fmt.Sprintf("Bootstrap endpoint open until %s (%s) to hand out a new token for %s. It closes after one successful handout.",
+		until.Local().Format("15:04"), window, project))
+	warn(fmt.Sprintf("%s's previous token stopped working.", project))
+	return nil
+}
+
+// describeHandout says which token the endpoint hands out.
+func describeHandout(st bootstrap.Status) string {
+	if st.TokenName == "" {
+		return "the master token (COVE_CLIENT_SECRET)"
+	}
+	return st.TokenName + "'s token"
 }
 
 // describeBootstrap summarizes whether the endpoint is open, e.g.

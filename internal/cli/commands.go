@@ -131,8 +131,10 @@ func commandTable(embedded bool) []command {
 			names: []string{"bootstrap", "b"},
 			usages: []usage{
 				{forms: []string{"open [duration]"}, help: "Opens the bootstrap endpoint for 10 minutes (or the given duration, e.g. 30m),\n" +
-					"      so a new client (e.g. Lighthouse) can fetch the client token without\n" +
+					"      so a new client (e.g. Lighthouse) can fetch the master token without\n" +
 					"      credentials. It closes after one successful handout. (Also: bootstrap clear.)"},
+				{forms: []string{"open <project> [duration]"}, help: "The same, but hands out a new token for that project (see \"token\") instead.\n" +
+					"      The project's current token stops working."},
 				{forms: []string{"lock"}, help: "Closes the bootstrap endpoint now."},
 				{forms: []string{"status", ""}, help: "Shows whether it's open, the last handout, and which addresses may use it."},
 			},
