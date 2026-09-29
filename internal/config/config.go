@@ -20,36 +20,45 @@ type Config struct {
 	ClientSecret       string // COVE_CLIENT_SECRET: bearer token clients must send
 	EncryptionKey      string // VAULT_ENCRYPTION_KEY: source of the AES key
 	Port               string // APP_PORT
-	EnvPath            string // APP_ENV_PATH: file that generated secrets are written to
-	MarkerDir          string // APP_MARKER_PATH: bootstrap marker directory
+	EnvPath            string // APP_ENV_PATH: file that generated secrets are written to (default: the .env file that was loaded)
+	MarkerDir          string // APP_MARKER_PATH (or APP_MARKER_DIR): bootstrap marker directory
 }
 
 const defaultMarkerDir = "/app/vault/markers"
 
-// envFiles are tried in order by Load; the first one that exists is loaded.
+// envFiles are tried in order by Load, after APP_ENV_PATH; the first one that
+// exists is loaded.
 var envFiles = []string{".env", "/app/vault/.env"}
 
-// Load loads environment variables from the first .env file that exists, for
-// both dev (./.env) and Docker (/app/vault/.env). A file that exists but can't
-// be read or parsed is an error; Load doesn't silently move on to the next one.
-func Load() error {
-	for _, path := range envFiles {
+// Load reads the .env file and returns the Config.
+//
+// The file is APP_ENV_PATH if that is set in the environment (as in
+// docker-compose), otherwise the first of ./.env and /app/vault/.env that
+// exists. A file that exists but can't be read or parsed is an error; Load
+// doesn't silently move on to the next one.
+func Load() (Config, error) {
+	candidates := envFiles
+	if path := os.Getenv("APP_ENV_PATH"); path != "" {
+		candidates = append([]string{path}, envFiles...)
+	}
+
+	for _, path := range candidates {
 		if _, err := os.Stat(path); errors.Is(err, fs.ErrNotExist) {
 			continue
 		}
 
 		if err := godotenv.Load(path); err != nil {
-			return fmt.Errorf("load %s: %w", path, err)
+			return Config{}, fmt.Errorf("load %s: %w", path, err)
 		}
-		return nil
+		return fromEnv(path), nil
 	}
 
-	return fmt.Errorf("no .env file found (looked for %s)", strings.Join(envFiles, ", "))
+	return Config{}, fmt.Errorf("no .env file found (looked for %s)", strings.Join(candidates, ", "))
 }
 
-// FromEnv reads the Config from environment variables. Call Load first so the
-// values from the .env file are included.
-func FromEnv() Config {
+// fromEnv reads the Config from environment variables. envFile is the .env
+// file that was loaded, used when APP_ENV_PATH isn't set.
+func fromEnv(envFile string) Config {
 	cfg := Config{
 		DatabaseURL:        os.Getenv("COVE_DATABASE_URL"),
 		MigrateDatabaseURL: os.Getenv("COVE_MIGRATE_DATABASE_URL"),
@@ -60,6 +69,14 @@ func FromEnv() Config {
 		MarkerDir:          os.Getenv("APP_MARKER_PATH"),
 	}
 
+	if cfg.EnvPath == "" {
+		cfg.EnvPath = envFile
+	}
+
+	// APP_MARKER_DIR is an older name that docker-compose.yml used to set.
+	if cfg.MarkerDir == "" {
+		cfg.MarkerDir = os.Getenv("APP_MARKER_DIR")
+	}
 	if cfg.MarkerDir == "" {
 		cfg.MarkerDir = defaultMarkerDir
 	}

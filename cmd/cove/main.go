@@ -19,11 +19,10 @@ import (
 
 func main() {
 
-	if err := config.Load(); err != nil {
+	cfg, err := config.Load()
+	if err != nil {
 		panic(err)
 	}
-
-	cfg := config.FromEnv()
 
 	if len(os.Args) > 1 && os.Args[1] == "migrate" {
 		runMigrate(cfg, os.Args[2:])
@@ -46,7 +45,7 @@ func main() {
 
 	db := database.New(cfg.DatabaseURL)
 
-	err := db.Connect(ctx)
+	err = db.Connect(ctx)
 	if err != nil {
 		panic(fmt.Sprintf("Connect DB: %q", err))
 	}

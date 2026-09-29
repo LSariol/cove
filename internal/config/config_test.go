@@ -29,9 +29,10 @@ func writeEnvFile(t *testing.T, dir string, content string) string {
 func TestLoadReportsParseErrors(t *testing.T) {
 	dir := t.TempDir()
 	t.Chdir(dir)
+	unsetEnv(t, "APP_ENV_PATH")
 	writeEnvFile(t, dir, "APP_PORT 2101\n")
 
-	err := Load()
+	_, err := Load()
 	if err == nil {
 		t.Fatal("Load succeeded on an invalid .env")
 	}
@@ -42,10 +43,11 @@ func TestLoadReportsParseErrors(t *testing.T) {
 
 func TestLoadReportsMissingFile(t *testing.T) {
 	t.Chdir(t.TempDir())
+	unsetEnv(t, "APP_ENV_PATH")
 	envFiles = []string{".env"}
 	t.Cleanup(func() { envFiles = []string{".env", "/app/vault/.env"} })
 
-	err := Load()
+	_, err := Load()
 	if err == nil || !strings.Contains(err.Error(), "no .env file found") {
 		t.Fatalf("Load error = %v, want no .env file found", err)
 	}
@@ -54,13 +56,55 @@ func TestLoadReportsMissingFile(t *testing.T) {
 func TestLoadReadsValues(t *testing.T) {
 	dir := t.TempDir()
 	t.Chdir(dir)
-	unsetEnv(t, "APP_PORT")
+	unsetEnv(t, "APP_PORT", "APP_ENV_PATH")
 	writeEnvFile(t, dir, "APP_PORT=2101\n")
 
-	if err := Load(); err != nil {
+	cfg, err := Load()
+	if err != nil {
 		t.Fatal(err)
 	}
-	if got := os.Getenv("APP_PORT"); got != "2101" {
-		t.Fatalf("APP_PORT = %q, want 2101", got)
+	if cfg.Port != "2101" {
+		t.Fatalf("Port = %q, want 2101", cfg.Port)
+	}
+	if cfg.EnvPath != ".env" {
+		t.Fatalf("EnvPath = %q, want the loaded file .env", cfg.EnvPath)
+	}
+}
+
+func TestLoadPrefersAppEnvPath(t *testing.T) {
+	dir := t.TempDir()
+	t.Chdir(dir)
+	unsetEnv(t, "APP_PORT")
+	writeEnvFile(t, dir, "APP_PORT=1111\n")
+
+	other := filepath.Join(t.TempDir(), "cove.env")
+	if err := os.WriteFile(other, []byte("APP_PORT=2222\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("APP_ENV_PATH", other)
+
+	cfg, err := Load()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if cfg.Port != "2222" || cfg.EnvPath != other {
+		t.Fatalf("Port = %q, EnvPath = %q; want the APP_ENV_PATH file", cfg.Port, cfg.EnvPath)
+	}
+}
+
+func TestMarkerDir(t *testing.T) {
+	unsetEnv(t, "APP_MARKER_PATH", "APP_MARKER_DIR")
+	if got := fromEnv(".env").MarkerDir; got != defaultMarkerDir {
+		t.Errorf("default MarkerDir = %q", got)
+	}
+
+	t.Setenv("APP_MARKER_DIR", "/old/name")
+	if got := fromEnv(".env").MarkerDir; got != "/old/name" {
+		t.Errorf("MarkerDir with APP_MARKER_DIR = %q", got)
+	}
+
+	t.Setenv("APP_MARKER_PATH", "/new/name")
+	if got := fromEnv(".env").MarkerDir; got != "/new/name" {
+		t.Errorf("APP_MARKER_PATH should win, got %q", got)
 	}
 }

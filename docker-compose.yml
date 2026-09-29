@@ -10,7 +10,7 @@ services:
       - APP_PORT=2100
       - APP_ENV_PATH=/app/vault/.env
       - APP_VAULT_PATH=/app/vault/vault.json
-      - APP_MARKER_DIR=/app/vault/markers
+      - APP_MARKER_PATH=/app/vault/markers
     container_name: cove
     ports:
       - "2100:2100"
