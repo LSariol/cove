@@ -91,15 +91,17 @@ func (s *Server) getAllSecrets(w http.ResponseWriter, r *http.Request) {
 
 func (s *Server) getSecret(w http.ResponseWriter, r *http.Request, id string, source string) {
 	secret, err := s.vault.Get(r.Context(), id, source)
-	if err != nil {
-		// Every failure is 404 not_found, to keep the /v0 contract. The log
-		// records the real cause when it isn't simply a missing key.
-		message := "secret not found"
-		if !errors.Is(err, vault.ErrNotFound) {
-			log.Printf("get %q (source %q) failed: %v", id, source, err)
-			message = "secret could not be read"
-		}
-		writeError(w, http.StatusNotFound, "not_found", message)
+	switch {
+	case errors.Is(err, vault.ErrNotFound):
+		writeError(w, http.StatusNotFound, "not_found", "secret not found")
+		return
+	case errors.Is(err, vault.ErrDecrypt):
+		log.Printf("get %q (source %q) failed: %v", id, source, err)
+		writeError(w, http.StatusInternalServerError, "decrypt_error", "the secret exists but couldn't be decrypted; VAULT_ENCRYPTION_KEY may have changed")
+		return
+	case err != nil:
+		log.Printf("get %q (source %q) failed: %v", id, source, err)
+		writeError(w, http.StatusInternalServerError, "read_error", "the secret could not be read")
 		return
 	}
 
@@ -122,13 +124,12 @@ func (s *Server) postSecret(w http.ResponseWriter, r *http.Request, key string, 
 	}
 
 	if err := s.vault.Create(r.Context(), key, body.Value, source); err != nil {
-		message := "failed to create secret"
 		if errors.Is(err, vault.ErrAlreadyExists) {
-			message = "a secret with this key already exists; use PATCH to change its value"
-		} else {
-			log.Printf("create %q (source %q) failed: %v", key, source, err)
+			writeError(w, http.StatusConflict, "already_exists", "a secret with this key already exists; use PATCH to change its value")
+			return
 		}
-		writeError(w, http.StatusInternalServerError, "create_error", message)
+		log.Printf("create %q (source %q) failed: %v", key, source, err)
+		writeError(w, http.StatusInternalServerError, "create_error", "failed to create secret")
 		return
 	}
 
@@ -153,13 +154,12 @@ func (s *Server) patchSecret(w http.ResponseWriter, r *http.Request, key string,
 	}
 
 	if _, err := s.vault.Update(r.Context(), key, body.Value, source); err != nil {
-		message := "failed to update secret"
 		if errors.Is(err, vault.ErrNotFound) {
-			message = "no secret with this key exists; use POST to create it"
-		} else {
-			log.Printf("update %q (source %q) failed: %v", key, source, err)
+			writeError(w, http.StatusNotFound, "not_found", "no secret with this key exists; use POST to create it")
+			return
 		}
-		writeError(w, http.StatusInternalServerError, "update_error", message)
+		log.Printf("update %q (source %q) failed: %v", key, source, err)
+		writeError(w, http.StatusInternalServerError, "update_error", "failed to update secret")
 		return
 	}
 
@@ -174,12 +174,12 @@ func (s *Server) patchSecret(w http.ResponseWriter, r *http.Request, key string,
 
 func (s *Server) deleteSecret(w http.ResponseWriter, r *http.Request, key string, source string) {
 	if err := s.vault.Delete(r.Context(), key, source); err != nil {
-		message := "secret not found"
-		if !errors.Is(err, vault.ErrNotFound) {
-			log.Printf("delete %q (source %q) failed: %v", key, source, err)
-			message = "secret could not be deleted"
+		if errors.Is(err, vault.ErrNotFound) {
+			writeError(w, http.StatusNotFound, "not_found", "secret not found")
+			return
 		}
-		writeError(w, http.StatusNotFound, "not_found", message)
+		log.Printf("delete %q (source %q) failed: %v", key, source, err)
+		writeError(w, http.StatusInternalServerError, "delete_error", "the secret could not be deleted")
 		return
 	}
 
