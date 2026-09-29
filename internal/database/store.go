@@ -45,7 +45,7 @@ func (d *Database) InsertSecret(ctx context.Context, key string, encryptedValue 
 	VALUES ($1, $2)
 	RETURNING ` + secretColumns
 
-	s, err := scanSecret(d.Pool.QueryRow(ctx, query, key, encryptedValue))
+	s, err := scanSecret(d.conn().QueryRow(ctx, query, key, encryptedValue))
 	if err != nil {
 		return s, fmt.Errorf("insert secret %q: %w", key, classify(err))
 	}
@@ -60,7 +60,7 @@ func (d *Database) ReadSecret(ctx context.Context, key string) (Secret, error) {
 	WHERE key = $1
 	RETURNING ` + secretColumns
 
-	s, err := scanSecret(d.Pool.QueryRow(ctx, query, key))
+	s, err := scanSecret(d.conn().QueryRow(ctx, query, key))
 	if err != nil {
 		return s, fmt.Errorf("read secret %q: %w", key, classify(err))
 	}
@@ -74,7 +74,24 @@ func (d *Database) GetSecret(ctx context.Context, key string) (Secret, error) {
 	FROM cove.secrets
 	WHERE key = $1`
 
-	s, err := scanSecret(d.Pool.QueryRow(ctx, query, key))
+	s, err := scanSecret(d.conn().QueryRow(ctx, query, key))
+	if err != nil {
+		return s, fmt.Errorf("get secret %q: %w", key, classify(err))
+	}
+	return s, nil
+}
+
+// GetSecretForUpdate returns a secret and locks its row until the transaction
+// ends, so concurrent changes to it happen one after another. Use it inside
+// WithinTx.
+func (d *Database) GetSecretForUpdate(ctx context.Context, key string) (Secret, error) {
+	const query = `
+	SELECT ` + secretColumns + `
+	FROM cove.secrets
+	WHERE key = $1
+	FOR UPDATE`
+
+	s, err := scanSecret(d.conn().QueryRow(ctx, query, key))
 	if err != nil {
 		return s, fmt.Errorf("get secret %q: %w", key, classify(err))
 	}
@@ -88,7 +105,7 @@ func (d *Database) ListSecrets(ctx context.Context) ([]Secret, error) {
 	FROM cove.secrets
 	ORDER BY key ASC`
 
-	rows, err := d.Pool.Query(ctx, query)
+	rows, err := d.conn().Query(ctx, query)
 	if err != nil {
 		return nil, fmt.Errorf("query secrets: %w", err)
 	}
@@ -128,7 +145,7 @@ func (d *Database) UpdateSecretValue(ctx context.Context, key string, encryptedV
 	WHERE key = $1
 	RETURNING ` + secretColumns
 
-	s, err := scanSecret(d.Pool.QueryRow(ctx, query, key, encryptedValue))
+	s, err := scanSecret(d.conn().QueryRow(ctx, query, key, encryptedValue))
 	if err != nil {
 		return s, fmt.Errorf("update secret %q: %w", key, classify(err))
 	}
@@ -142,7 +159,7 @@ func (d *Database) DeleteSecret(ctx context.Context, key string) (Secret, error)
 	WHERE key = $1
 	RETURNING ` + secretColumns
 
-	s, err := scanSecret(d.Pool.QueryRow(ctx, query, key))
+	s, err := scanSecret(d.conn().QueryRow(ctx, query, key))
 	if err != nil {
 		return s, fmt.Errorf("delete secret %q: %w", key, classify(err))
 	}
@@ -157,7 +174,7 @@ func (d *Database) LogEvent(ctx context.Context, logInfo EventLogInput) error {
 	VALUES ($1, $2, $3, $4, $5, $6, $7, NULLIF($8, ''));
 	`
 
-	_, err := d.Pool.Exec(ctx, query, logInfo.SecretID, logInfo.SecretKey, logInfo.SecretVersion, logInfo.Kind, logInfo.Source, logInfo.OldEncryptedValue, logInfo.NewEncryptedValue, logInfo.Detail)
+	_, err := d.conn().Exec(ctx, query, logInfo.SecretID, logInfo.SecretKey, logInfo.SecretVersion, logInfo.Kind, logInfo.Source, logInfo.OldEncryptedValue, logInfo.NewEncryptedValue, logInfo.Detail)
 	if err != nil {
 		return fmt.Errorf("LogEvent: %w", err)
 	}
@@ -173,7 +190,7 @@ func (d *Database) RenameSecret(ctx context.Context, oldKey string, newKey strin
 	WHERE key = $1
 	RETURNING ` + secretColumns
 
-	s, err := scanSecret(d.Pool.QueryRow(ctx, query, oldKey, newKey))
+	s, err := scanSecret(d.conn().QueryRow(ctx, query, oldKey, newKey))
 	if err != nil {
 		return s, fmt.Errorf("rename secret %q to %q: %w", oldKey, newKey, classify(err))
 	}
@@ -196,7 +213,7 @@ func (d *Database) ListEvents(ctx context.Context, key string, limit int) ([]Eve
 		args = append(args, limit)
 	}
 
-	rows, err := d.Pool.Query(ctx, query, args...)
+	rows, err := d.conn().Query(ctx, query, args...)
 	if err != nil {
 		return nil, fmt.Errorf("list events for %q: %w", key, err)
 	}
@@ -223,7 +240,7 @@ func (d *Database) LastEvent(ctx context.Context, key string, kind EventKind) (e
 	ORDER BY occurred_at DESC, id DESC
 	LIMIT 1`
 
-	e, err = scanEvent(d.Pool.QueryRow(ctx, query, key, kind))
+	e, err = scanEvent(d.conn().QueryRow(ctx, query, key, kind))
 	if errors.Is(err, pgx.ErrNoRows) {
 		return e, false, nil
 	}
@@ -245,7 +262,7 @@ func (d *Database) ValueVersions(ctx context.Context, key string) (map[int]strin
 	    OR (kind = 'delete' AND old_encrypted_value IS NOT NULL))
 	ORDER BY id`
 
-	rows, err := d.Pool.Query(ctx, query, key)
+	rows, err := d.conn().Query(ctx, query, key)
 	if err != nil {
 		return nil, fmt.Errorf("value history for %q: %w", key, err)
 	}
@@ -274,7 +291,7 @@ func (d *Database) ValueVersions(ctx context.Context, key string) (map[int]strin
 func (d *Database) RecordBootstrap(ctx context.Context, remoteAddr string, outcome string) error {
 	const query = `INSERT INTO cove.bootstrap_log (remote_addr, outcome) VALUES ($1, $2)`
 
-	if _, err := d.Pool.Exec(ctx, query, remoteAddr, outcome); err != nil {
+	if _, err := d.conn().Exec(ctx, query, remoteAddr, outcome); err != nil {
 		return fmt.Errorf("record bootstrap attempt: %w", err)
 	}
 	return nil
@@ -288,7 +305,7 @@ func (d *Database) RecentBootstraps(ctx context.Context, limit int) ([]Bootstrap
 	ORDER BY occurred_at DESC, id DESC
 	LIMIT $1`
 
-	rows, err := d.Pool.Query(ctx, query, limit)
+	rows, err := d.conn().Query(ctx, query, limit)
 	if err != nil {
 		return nil, fmt.Errorf("recent bootstrap attempts: %w", err)
 	}
@@ -308,7 +325,7 @@ func (d *Database) RecentBootstraps(ctx context.Context, limit int) ([]Bootstrap
 // CountSecrets returns how many secrets the vault holds.
 func (d *Database) CountSecrets(ctx context.Context) (int, error) {
 	var n int
-	if err := d.Pool.QueryRow(ctx, `SELECT count(*) FROM cove.secrets`).Scan(&n); err != nil {
+	if err := d.conn().QueryRow(ctx, `SELECT count(*) FROM cove.secrets`).Scan(&n); err != nil {
 		return 0, fmt.Errorf("count secrets: %w", err)
 	}
 	return n, nil

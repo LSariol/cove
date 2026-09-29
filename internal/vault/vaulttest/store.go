@@ -4,7 +4,9 @@ package vaulttest
 
 import (
 	"context"
+	"errors"
 	"fmt"
+	"maps"
 	"sort"
 	"sync"
 	"time"
@@ -21,6 +23,35 @@ type Store struct {
 	// Events holds every logged event, in order.
 	Events []database.EventLogInput
 	times  []time.Time
+
+	// FailLogEvent makes LogEvent fail, to test that operations are rolled
+	// back when their event can't be recorded.
+	FailLogEvent bool
+}
+
+// ErrLogEvent is what LogEvent returns while FailLogEvent is set.
+var ErrLogEvent = errors.New("vaulttest: event log unavailable")
+
+// WithinTx runs fn and, like a real transaction, undoes all of fn's changes
+// if it returns an error.
+func (s *Store) WithinTx(ctx context.Context, fn func(tx database.Store) error) error {
+	s.mu.Lock()
+	secrets := maps.Clone(s.secrets)
+	nextID, events, times := s.nextID, len(s.Events), len(s.times)
+	s.mu.Unlock()
+
+	if err := fn(s); err != nil {
+		s.mu.Lock()
+		s.secrets, s.nextID = secrets, nextID
+		s.Events, s.times = s.Events[:events], s.times[:times]
+		s.mu.Unlock()
+		return err
+	}
+	return nil
+}
+
+func (s *Store) GetSecretForUpdate(ctx context.Context, key string) (database.Secret, error) {
+	return s.GetSecret(ctx, key)
 }
 
 func NewStore() *Store {
@@ -158,6 +189,9 @@ func (s *Store) LogEvent(ctx context.Context, logInfo database.EventLogInput) er
 	s.mu.Lock()
 	defer s.mu.Unlock()
 
+	if s.FailLogEvent {
+		return ErrLogEvent
+	}
 	s.Events = append(s.Events, logInfo)
 	s.times = append(s.times, time.Now())
 	return nil

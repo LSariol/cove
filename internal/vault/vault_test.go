@@ -198,3 +198,49 @@ func TestShowDoesNotCountAsARead(t *testing.T) {
 		t.Fatalf("Get read count = %d, want 1", got.ReadCount)
 	}
 }
+
+func TestFailedDecryptIsNotCountedOrLogged(t *testing.T) {
+	ctx := context.Background()
+	store := vaulttest.NewStore()
+	_ = vault.New(store, encryption.NewCipher("the-old-key")).Create(ctx, "app.key", "x", "test")
+	events := len(store.Events)
+
+	wrongKey := vault.New(store, encryption.NewCipher("a-new-key"))
+	if _, err := wrongKey.Get(ctx, "app.key", "myapp"); !errors.Is(err, vault.ErrDecrypt) {
+		t.Fatalf("Get = %v, want ErrDecrypt", err)
+	}
+
+	info, _ := wrongKey.Info(ctx, "app.key")
+	if info.ReadCount != 0 || len(store.Events) != events {
+		t.Fatalf("failed read counted (%d) or logged (%d new events)", info.ReadCount, len(store.Events)-events)
+	}
+}
+
+func TestNothingHappensWithoutARecord(t *testing.T) {
+	ctx := context.Background()
+	v, store := newVault(t)
+	_ = v.Create(ctx, "existing.key", "one", "test")
+	store.FailLogEvent = true
+
+	if err := v.Create(ctx, "new.key", "x", "test"); !errors.Is(err, vaulttest.ErrLogEvent) {
+		t.Errorf("Create = %v, want the log error", err)
+	}
+	if _, err := v.Update(ctx, "existing.key", "two", "test"); err == nil {
+		t.Error("Update succeeded without a record")
+	}
+	if err := v.Delete(ctx, "existing.key", "test"); err == nil {
+		t.Error("Delete succeeded without a record")
+	}
+	if _, err := v.Get(ctx, "existing.key", "test"); err == nil {
+		t.Error("Get succeeded without a record")
+	}
+
+	store.FailLogEvent = false
+	if _, err := v.Show(ctx, "new.key", "test"); !errors.Is(err, vault.ErrNotFound) {
+		t.Error("the unrecorded create wasn't rolled back")
+	}
+	got, err := v.Show(ctx, "existing.key", "test")
+	if err != nil || got.Value != "one" || got.Version != 1 {
+		t.Errorf("the unrecorded update or delete wasn't rolled back: %+v, %v", got, err)
+	}
+}

@@ -8,12 +8,17 @@ import (
 	"fmt"
 	"time"
 
+	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgxpool"
 )
 
 type Database struct {
 	Pool       *pgxpool.Pool
 	ConnString string
+
+	// tx is set on the Database handed to a WithinTx callback; queries then
+	// run in that transaction (see conn).
+	tx pgx.Tx
 }
 
 // New returns a Database for connString. Call Connect before using it.
