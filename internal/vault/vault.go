@@ -48,6 +48,10 @@ func New(store Store, cipher *encryption.Cipher) *Vault {
 
 // Create encrypts value and stores it as a new secret.
 func (v *Vault) Create(ctx context.Context, key string, value string, source string) error {
+	if err := ValidateKey(key); err != nil {
+		return err
+	}
+
 	encryptedValue, err := v.cipher.Encrypt(value)
 	if err != nil {
 		return fmt.Errorf("encrypt: %w", err)

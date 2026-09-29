@@ -21,6 +21,7 @@ func TestValidateKey(t *testing.T) {
 	}
 
 	invalid := []string{
+		"",
 		"has space",
 		"db:url",
 		"github/token",

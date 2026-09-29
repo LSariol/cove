@@ -133,3 +133,17 @@ func TestMissingSecretErrors(t *testing.T) {
 		t.Errorf("failed operations logged %d events, want 0", len(store.Events))
 	}
 }
+
+func TestCreateRejectsInvalidKeys(t *testing.T) {
+	ctx := context.Background()
+	v, store := newVault(t)
+
+	for _, key := range []string{"github/token", "db:url", "has space", ""} {
+		if err := v.Create(ctx, key, "value", "cove_cli"); err == nil {
+			t.Errorf("Create(%q) succeeded, want an error", key)
+		}
+	}
+	if len(store.Events) != 0 {
+		t.Errorf("rejected creates logged %d events", len(store.Events))
+	}
+}
