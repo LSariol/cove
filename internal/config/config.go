@@ -105,7 +105,7 @@ func Ensure(cfg Config) (Config, error) {
 		}
 
 		if err := Store(cfg.EnvPath, "COVE_CLIENT_SECRET", newValue); err != nil {
-			return cfg, err
+			return cfg, saveError("COVE_CLIENT_SECRET", cfg.EnvPath, err)
 		}
 		cfg.ClientSecret = newValue
 	}
@@ -117,10 +117,17 @@ func Ensure(cfg Config) (Config, error) {
 		}
 
 		if err := Store(cfg.EnvPath, "VAULT_ENCRYPTION_KEY", newValue); err != nil {
-			return cfg, err
+			return cfg, saveError("VAULT_ENCRYPTION_KEY", cfg.EnvPath, err)
 		}
 		cfg.EncryptionKey = newValue
 	}
 
 	return cfg, nil
+}
+
+// saveError explains a failed save of a generated secret. In Docker the .env
+// file is mounted read-only, so the fix is to set the value in the file.
+func saveError(name string, path string, err error) error {
+	return fmt.Errorf("%s is not set, and a generated value couldn't be saved to %s: %w\n"+
+		"Set %s in that file (in Docker, the host file mounted there), or make it writable", name, path, err, name)
 }

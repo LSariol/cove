@@ -144,3 +144,24 @@ func TestEnsureKeepsExistingSecrets(t *testing.T) {
 		t.Fatalf("Ensure changed existing values: %+v", out)
 	}
 }
+
+func TestEnsureExplainsReadOnlyEnvFile(t *testing.T) {
+	if os.Geteuid() == 0 {
+		t.Skip("root can write read-only files")
+	}
+	path := writeEnvFile(t, t.TempDir(), "")
+	if err := os.Chmod(path, 0o400); err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { os.Chmod(path, 0o600) })
+
+	_, err := Ensure(Config{EnvPath: path, EncryptionKey: "existing-encryption-key"})
+	if err == nil {
+		t.Fatal("Ensure succeeded with a read-only .env")
+	}
+	for _, want := range []string{"COVE_CLIENT_SECRET is not set", path, "Set COVE_CLIENT_SECRET in that file"} {
+		if !strings.Contains(err.Error(), want) {
+			t.Errorf("error %q doesn't mention %q", err, want)
+		}
+	}
+}

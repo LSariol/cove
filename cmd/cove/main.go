@@ -21,7 +21,7 @@ func main() {
 
 	cfg, err := config.Load()
 	if err != nil {
-		panic(err)
+		fatal(err)
 	}
 
 	if len(os.Args) > 1 && os.Args[1] == "migrate" {
@@ -31,7 +31,7 @@ func main() {
 
 	cfg, err = config.Ensure(cfg)
 	if err != nil {
-		panic(err)
+		fatal(err)
 	}
 
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
@@ -40,7 +40,7 @@ func main() {
 	// Migrations only run when the migrator connection is configured.
 	if cfg.MigrateDatabaseURL != "" {
 		if err := database.Migrate(ctx, cfg.MigrateDatabaseURL); err != nil {
-			panic(fmt.Sprintf("Migrate DB: %v", err))
+			fatal(fmt.Errorf("migrate database: %w", err))
 		}
 	}
 
@@ -48,11 +48,11 @@ func main() {
 
 	err = db.Connect(ctx)
 	if err != nil {
-		panic(fmt.Sprintf("Connect DB: %q", err))
+		fatal(fmt.Errorf("connect to database: %w", err))
 	}
 
 	if err := db.CheckSchemaVersion(ctx); err != nil {
-		panic(fmt.Sprintf("Check DB schema: %v", err))
+		fatal(fmt.Errorf("check database schema: %w", err))
 	}
 
 	v := vault.New(db, encryption.NewCipher(cfg.EncryptionKey))
@@ -98,4 +98,11 @@ func runMigrate(cfg config.Config, args []string) {
 		fmt.Fprintln(os.Stderr, err)
 		os.Exit(1)
 	}
+}
+
+// fatal prints a startup error and exits. A clear message is more useful here
+// than a panic's stack trace, especially in docker logs.
+func fatal(err error) {
+	fmt.Fprintf(os.Stderr, "cove: %v\n", err)
+	os.Exit(1)
 }
