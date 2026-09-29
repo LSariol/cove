@@ -10,8 +10,6 @@ RUN go build -ldflags "-X main.version=${VERSION}" -o cove ./cmd/cove
 FROM alpine:latest
 WORKDIR /app
 
-RUN mkdir -p /app/cove
-
 COPY --from=builder /app/cove /cove
 
 EXPOSE 2100
