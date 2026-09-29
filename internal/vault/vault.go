@@ -36,6 +36,7 @@ type Store interface {
 	LogEvent(ctx context.Context, logInfo database.EventLogInput) error
 	ListEvents(ctx context.Context, key string, limit int) ([]database.Event, error)
 	LastEvent(ctx context.Context, key string, kind database.EventKind) (database.Event, bool, error)
+	RenameSecret(ctx context.Context, oldKey string, newKey string) (database.Secret, error)
 }
 
 // Event is one entry in a secret's history.
@@ -217,6 +218,34 @@ func (v *Vault) Delete(ctx context.Context, key string, source string) error {
 		NewEncryptedValue: nil,
 	})
 
+	return nil
+}
+
+// Rename changes a secret's key, keeping its value, version and read count.
+// The rename is logged under both keys, so either key's history shows it.
+func (v *Vault) Rename(ctx context.Context, oldKey string, newKey string, source string) error {
+	if err := ValidateKey(newKey); err != nil {
+		return err
+	}
+
+	renamed, err := v.store.RenameSecret(ctx, oldKey, newKey)
+	if err != nil {
+		return err
+	}
+
+	for _, e := range []struct{ key, detail string }{
+		{oldKey, "renamed to " + newKey},
+		{newKey, "renamed from " + oldKey},
+	} {
+		_ = v.store.LogEvent(ctx, database.EventLogInput{
+			SecretID:      renamed.ID,
+			SecretKey:     e.key,
+			SecretVersion: renamed.Version,
+			Kind:          database.EventRename,
+			Source:        source,
+			Detail:        e.detail,
+		})
+	}
 	return nil
 }
 

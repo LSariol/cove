@@ -20,6 +20,7 @@ func TestExitStopsCoveInsteadOfKillingIt(t *testing.T) {
 }
 
 func TestExecReportsUnknownCommandsAndUsage(t *testing.T) {
+	captureOutput(t)
 	c := New(nil, nil, Options{})
 	ctx := context.Background()
 

@@ -84,6 +84,12 @@ func commandTable(embedded bool) []command {
 			run: (*CLI).list,
 		},
 		{
+			names:    []string{"rename"},
+			usages:   []usage{{forms: []string{"<key> <new-key>"}, help: "Renames a secret, keeping its value, version and history.\n      Apps using the old key stop finding it."}},
+			run:      (*CLI).rename,
+			complete: (*CLI).keyNames,
+		},
+		{
 			names:    []string{"info", "i"},
 			usages:   []usage{{forms: []string{"<key>"}, help: "Shows a secret's details and when it was last read. Never shows the value."}},
 			run:      (*CLI).info,

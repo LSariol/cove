@@ -113,6 +113,24 @@ func (s *Store) DeleteSecret(ctx context.Context, key string) (database.Secret, 
 	return secret, nil
 }
 
+func (s *Store) RenameSecret(ctx context.Context, oldKey string, newKey string) (database.Secret, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
+	secret, ok := s.secrets[oldKey]
+	if !ok {
+		return database.Secret{}, fmt.Errorf("rename secret %q: %w", oldKey, database.ErrNotFound)
+	}
+	if _, taken := s.secrets[newKey]; taken {
+		return database.Secret{}, fmt.Errorf("rename secret to %q: %w", newKey, database.ErrAlreadyExists)
+	}
+
+	delete(s.secrets, oldKey)
+	secret.Key = newKey
+	s.secrets[newKey] = secret
+	return secret, nil
+}
+
 func (s *Store) LogEvent(ctx context.Context, logInfo database.EventLogInput) error {
 	s.mu.Lock()
 	defer s.mu.Unlock()

@@ -94,6 +94,27 @@ func (c *CLI) update(ctx context.Context, args []string) error {
 	return nil
 }
 
+func (c *CLI) rename(ctx context.Context, args []string) error {
+	if len(args) != 3 {
+		return usageError{form: "rename <key> <new-key>"}
+	}
+	oldKey, newKey := args[1], args[2]
+
+	err := c.vault.Rename(ctx, oldKey, newKey, source)
+	switch {
+	case errors.Is(err, vault.ErrNotFound):
+		return fmt.Errorf("No secret named %q.", oldKey)
+	case errors.Is(err, vault.ErrAlreadyExists):
+		return fmt.Errorf("A secret named %q already exists. Pick another name, or delete that one first.", newKey)
+	case err != nil:
+		return fmt.Errorf("Couldn't rename %q to %q: %v", oldKey, newKey, err)
+	}
+
+	success(fmt.Sprintf("Renamed %q to %q.", oldKey, newKey))
+	warn(fmt.Sprintf("Apps still asking for %q will get \"not found\" until they use the new key.", oldKey))
+	return nil
+}
+
 func (c *CLI) search(ctx context.Context, args []string) error {
 	if len(args) != 2 {
 		return usageError{form: "search <text>"}
