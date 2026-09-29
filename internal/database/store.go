@@ -6,7 +6,34 @@ import (
 	"fmt"
 
 	"github.com/jackc/pgx/v5"
+	"github.com/jackc/pgx/v5/pgconn"
 )
+
+var (
+	// ErrNotFound is returned when no secret has the requested key.
+	ErrNotFound = errors.New("secret not found")
+
+	// ErrAlreadyExists is returned when creating a secret whose key is taken.
+	ErrAlreadyExists = errors.New("a secret with this key already exists")
+)
+
+// uniqueViolation is Postgres's error code for a duplicate unique key.
+const uniqueViolation = "23505"
+
+// classify replaces driver errors callers need to act on with ErrNotFound or
+// ErrAlreadyExists, and returns every other error unchanged.
+func classify(err error) error {
+	if errors.Is(err, pgx.ErrNoRows) {
+		return ErrNotFound
+	}
+
+	var pgErr *pgconn.PgError
+	if errors.As(err, &pgErr) && pgErr.Code == uniqueViolation {
+		return ErrAlreadyExists
+	}
+
+	return err
+}
 
 // secretColumns is the column list scanned by scanSecret, in order.
 const secretColumns = `id, key, encrypted_value, version, read_count, created_at, updated_at`
@@ -20,7 +47,7 @@ func (d *Database) InsertSecret(ctx context.Context, key string, encryptedValue 
 
 	s, err := scanSecret(d.Pool.QueryRow(ctx, query, key, encryptedValue))
 	if err != nil {
-		return s, fmt.Errorf("insert secret %q: %w", key, err)
+		return s, fmt.Errorf("insert secret %q: %w", key, classify(err))
 	}
 	return s, nil
 }
@@ -35,7 +62,7 @@ func (d *Database) ReadSecret(ctx context.Context, key string) (Secret, error) {
 
 	s, err := scanSecret(d.Pool.QueryRow(ctx, query, key))
 	if err != nil {
-		return s, fmt.Errorf("read secret %q: %w", key, err)
+		return s, fmt.Errorf("read secret %q: %w", key, classify(err))
 	}
 	return s, nil
 }
@@ -49,7 +76,7 @@ func (d *Database) GetSecret(ctx context.Context, key string) (Secret, error) {
 
 	s, err := scanSecret(d.Pool.QueryRow(ctx, query, key))
 	if err != nil {
-		return s, fmt.Errorf("select existing secret %q: %w", key, err)
+		return s, fmt.Errorf("get secret %q: %w", key, classify(err))
 	}
 	return s, nil
 }
@@ -103,7 +130,7 @@ func (d *Database) UpdateSecretValue(ctx context.Context, key string, encryptedV
 
 	s, err := scanSecret(d.Pool.QueryRow(ctx, query, key, encryptedValue))
 	if err != nil {
-		return s, fmt.Errorf("update secret %q: %w", key, err)
+		return s, fmt.Errorf("update secret %q: %w", key, classify(err))
 	}
 	return s, nil
 }
@@ -117,10 +144,7 @@ func (d *Database) DeleteSecret(ctx context.Context, key string) (Secret, error)
 
 	s, err := scanSecret(d.Pool.QueryRow(ctx, query, key))
 	if err != nil {
-		if errors.Is(err, pgx.ErrNoRows) {
-			return s, fmt.Errorf("no secret found with key %q", key)
-		}
-		return s, fmt.Errorf("delete secret %q: %w", key, err)
+		return s, fmt.Errorf("delete secret %q: %w", key, classify(err))
 	}
 	return s, nil
 }

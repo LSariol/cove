@@ -2,6 +2,7 @@ package vault_test
 
 import (
 	"context"
+	"errors"
 	"testing"
 
 	"github.com/LSariol/Cove/internal/database"
@@ -145,5 +146,31 @@ func TestCreateRejectsInvalidKeys(t *testing.T) {
 	}
 	if len(store.Events) != 0 {
 		t.Errorf("rejected creates logged %d events", len(store.Events))
+	}
+}
+
+func TestErrorKinds(t *testing.T) {
+	ctx := context.Background()
+	store := vaulttest.NewStore()
+	v := vault.New(store, encryption.NewCipher("test-vault-key"))
+
+	if _, err := v.Get(ctx, "missing", "test"); !errors.Is(err, vault.ErrNotFound) {
+		t.Errorf("Get missing = %v, want ErrNotFound", err)
+	}
+	if err := v.Update(ctx, "missing", "x", "test"); !errors.Is(err, vault.ErrNotFound) {
+		t.Errorf("Update missing = %v, want ErrNotFound", err)
+	}
+	if err := v.Delete(ctx, "missing", "test"); !errors.Is(err, vault.ErrNotFound) {
+		t.Errorf("Delete missing = %v, want ErrNotFound", err)
+	}
+
+	_ = v.Create(ctx, "app.key", "one", "test")
+	if err := v.Create(ctx, "app.key", "two", "test"); !errors.Is(err, vault.ErrAlreadyExists) {
+		t.Errorf("duplicate Create = %v, want ErrAlreadyExists", err)
+	}
+
+	otherKey := vault.New(store, encryption.NewCipher("a-different-key"))
+	if _, err := otherKey.Get(ctx, "app.key", "test"); !errors.Is(err, vault.ErrDecrypt) {
+		t.Errorf("Get with the wrong vault key = %v, want ErrDecrypt", err)
 	}
 }

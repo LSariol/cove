@@ -5,11 +5,24 @@ package vault
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"time"
 
 	"github.com/LSariol/Cove/internal/database"
 	"github.com/LSariol/Cove/internal/encryption"
+)
+
+var (
+	// ErrNotFound is returned when no secret has the requested key.
+	ErrNotFound = database.ErrNotFound
+
+	// ErrAlreadyExists is returned by Create when the key is already taken.
+	ErrAlreadyExists = database.ErrAlreadyExists
+
+	// ErrDecrypt is returned by Get when a stored value can't be decrypted,
+	// usually because VAULT_ENCRYPTION_KEY changed after it was stored.
+	ErrDecrypt = errors.New("the stored value couldn't be decrypted")
 )
 
 // Store is the persistence a Vault needs. *database.Database implements it.
@@ -84,7 +97,7 @@ func (v *Vault) Get(ctx context.Context, key string, source string) (Secret, err
 
 	value, err := v.cipher.Decrypt(s.EncryptedValue)
 	if err != nil {
-		return Secret{}, fmt.Errorf("get secret %q: %w", key, err)
+		return Secret{}, fmt.Errorf("get secret %q: %w (%v)", key, ErrDecrypt, err)
 	}
 
 	_ = v.store.LogEvent(ctx, database.EventLogInput{

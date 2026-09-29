@@ -31,7 +31,7 @@ func (s *Store) InsertSecret(ctx context.Context, key string, encryptedValue str
 	defer s.mu.Unlock()
 
 	if _, ok := s.secrets[key]; ok {
-		return database.Secret{}, fmt.Errorf("insert secret %q: already exists", key)
+		return database.Secret{}, fmt.Errorf("insert secret %q: %w", key, database.ErrAlreadyExists)
 	}
 
 	s.nextID++
@@ -54,7 +54,7 @@ func (s *Store) ReadSecret(ctx context.Context, key string) (database.Secret, er
 
 	secret, ok := s.secrets[key]
 	if !ok {
-		return database.Secret{}, fmt.Errorf("read secret %q: not found", key)
+		return database.Secret{}, fmt.Errorf("read secret %q: %w", key, database.ErrNotFound)
 	}
 	secret.ReadCount++
 	s.secrets[key] = secret
@@ -67,7 +67,7 @@ func (s *Store) GetSecret(ctx context.Context, key string) (database.Secret, err
 
 	secret, ok := s.secrets[key]
 	if !ok {
-		return database.Secret{}, fmt.Errorf("select existing secret %q: not found", key)
+		return database.Secret{}, fmt.Errorf("get secret %q: %w", key, database.ErrNotFound)
 	}
 	return secret, nil
 }
@@ -91,7 +91,7 @@ func (s *Store) UpdateSecretValue(ctx context.Context, key string, encryptedValu
 
 	secret, ok := s.secrets[key]
 	if !ok {
-		return database.Secret{}, fmt.Errorf("update secret %q: not found", key)
+		return database.Secret{}, fmt.Errorf("update secret %q: %w", key, database.ErrNotFound)
 	}
 	secret.EncryptedValue = encryptedValue
 	secret.Version++
@@ -106,7 +106,7 @@ func (s *Store) DeleteSecret(ctx context.Context, key string) (database.Secret, 
 
 	secret, ok := s.secrets[key]
 	if !ok {
-		return database.Secret{}, fmt.Errorf("no secret found with key %q", key)
+		return database.Secret{}, fmt.Errorf("delete secret %q: %w", key, database.ErrNotFound)
 	}
 	delete(s.secrets, key)
 	return secret, nil
