@@ -15,4 +15,5 @@ RUN mkdir -p /app/cove
 COPY --from=builder /app/cove /cove
 
 EXPOSE 2100
-CMD ["/cove"]
+# API server only; open the CLI with `docker exec -it <container> /cove shell`.
+CMD ["/cove", "serve"]

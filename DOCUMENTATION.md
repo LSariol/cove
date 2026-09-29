@@ -415,7 +415,7 @@ The CLI works directly on the vault (not through the HTTP API), and everything i
 |---|---|
 | `cove shell` | Interactive prompt, e.g. `docker exec -it cove /cove shell`. On a terminal it has line editing, up/down history, and Tab completion of commands and secret keys. `exit`, Ctrl+D or Ctrl+C leave the shell; the server keeps running. |
 | `cove <command> [args]` | Runs one command and exits: `0` on success, `1` on failure. E.g. `docker exec cove /cove list MYAPP_`. |
-| `cove` (no arguments) | The server with the prompt on stdin, as in v0.2.0 (for `docker attach`). Here `exit` stops the whole server. No line editing. |
+| `cove` (no arguments) | The server with the prompt on stdin, as in v0.2.0, for running Cove directly in a terminal. Here `exit` stops the whole server. No line editing. The Docker image runs `cove serve` instead. |
 
 Shell and one-shot mode use the server's `.env` but never generate secrets or run migrations (that's the server's job).
 
@@ -488,7 +488,7 @@ VS Code: `.vscode/launch.json` has a debug configuration for `cmd/cove`.
 
 ### Image (`Dockerfile`)
 
-Two-stage build: `golang:1.25.1-alpine` builds the binary, then it's copied to `/cove` in `alpine:latest`. The working directory is `/app`. The image exposes `2100`. The `VERSION` build argument is stamped into the binary (compose passes `COVE_VERSION`, default `dev`).
+Two-stage build: `golang:1.25.1-alpine` builds the binary, then it's copied to `/cove` in `alpine:latest`. The working directory is `/app`. The image exposes `2100` and runs `/cove serve`. The `VERSION` build argument is stamped into the binary (compose passes `COVE_VERSION`, default `dev`).
 
 ### Compose (`docker-compose.yml`)
 
@@ -498,7 +498,7 @@ Two-stage build: `golang:1.25.1-alpine` builds the binary, then it's copied to `
 | Network | `spark` (external, must already exist) |
 | `.env` | `/srv/server/storage/cove/.env` → `/app/vault/.env` (**read-only**) |
 | Markers | `/srv/server/storage/cove/markers` → `/app/vault/markers` |
-| `stdin_open` + `tty` | Keeps the older `docker attach` CLI working. Not needed with `docker exec` ([below](#using-the-cli-in-the-container)) |
+| Command | `cove serve` (the image's default): API only, no TTY, so nothing typed into the CLI reaches `docker logs` |
 | Restart | `unless-stopped` |
 | Healthcheck | `wget -qO- http://localhost:2100/v0/ready` every 10s (unhealthy when the database is unreachable) |
 
@@ -539,7 +539,7 @@ docker exec cove /cove status          # health overview; exits non-zero if some
 
 `docker exec` sessions aren't recorded in `docker logs`, and `exit` or Ctrl+C only end the session. A handy alias on the server: `alias cove='docker exec -it cove /cove shell'`.
 
-The older `docker attach cove` still works (detach with Ctrl+P, Ctrl+Q). There, `exit` and Ctrl+C stop Cove, and everything typed is recorded in `docker logs`.
+There's no `docker attach` CLI any more: the container runs `cove serve` without a TTY. (Plain `cove`, with the prompt on stdin, still exists for running Cove directly in a terminal.)
 
 ---
 

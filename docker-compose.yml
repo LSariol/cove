@@ -24,8 +24,9 @@ services:
         source: /srv/server/storage/cove/markers   
         target: /app/vault/markers
         read_only: false
-    stdin_open: true  # keeps STD open for the CLI
-    tty: true         # allocates a pseudo-TTY so you can interact
+    # The image runs `cove serve` (API only). For the CLI use
+    #   docker exec -it cove /cove shell     (or one command: docker exec cove /cove list)
+    # No TTY is attached, so nothing typed into the CLI ends up in docker logs.
     restart: unless-stopped
     healthcheck:
       test: ["CMD", "wget", "-qO-", "http://localhost:2100/v0/ready"]
