@@ -1,0 +1,73 @@
+name: CI
+
+on:
+  push:
+    branches: [main, "release/**"]
+  pull_request:
+
+permissions:
+  contents: read
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+
+    # A throwaway Postgres for the integration tests in internal/vault.
+    services:
+      postgres:
+        image: postgres:16
+        env:
+          POSTGRES_PASSWORD: postgres
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd pg_isready
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 10
+
+    env:
+      COVE_TEST_MIGRATE_URL: postgres://cove_migrator:migrator@localhost:5432/cove_db?sslmode=disable
+      COVE_TEST_DATABASE_URL: postgres://cove_app:app@localhost:5432/cove_db?sslmode=disable
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+
+      - name: Check formatting
+        run: |
+          unformatted=$(gofmt -l .)
+          if [ -n "$unformatted" ]; then
+            echo "These files need gofmt:"
+            echo "$unformatted"
+            exit 1
+          fi
+
+      - name: Vet
+        run: go vet ./...
+
+      # The same roles and database as in the README's Database Setup.
+      - name: Create roles and database
+        env:
+          PGPASSWORD: postgres
+        run: |
+          psql -h localhost -U postgres -v ON_ERROR_STOP=1 <<'SQL'
+          CREATE ROLE cove_owner    NOLOGIN;
+          CREATE ROLE cove_migrator LOGIN PASSWORD 'migrator';
+          CREATE ROLE cove_app      LOGIN PASSWORD 'app';
+          CREATE ROLE cove_reader   LOGIN PASSWORD 'reader';
+          GRANT cove_owner TO cove_migrator;
+          ALTER ROLE cove_migrator SET role = 'cove_owner';
+          CREATE DATABASE cove_db OWNER cove_owner;
+          REVOKE ALL ON DATABASE cove_db FROM PUBLIC;
+          GRANT CONNECT ON DATABASE cove_db TO cove_migrator, cove_app, cove_reader;
+          SQL
+
+      - name: Test
+        run: go test -race -count=1 ./...
+
+      - name: Build
+        run: CGO_ENABLED=0 go build -o /dev/null ./cmd/cove
