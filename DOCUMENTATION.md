@@ -59,6 +59,7 @@ internal/
     database.go               pgxpool connection (New, Connect, Close)
     migrate.go, migrations/   goose migrations and the startup schema check
     store.go                  SQL queries only; values in and out are always encrypted
+    tx.go                     The Store interface and WithinTx (transactions)
     types.go                  Secret and Event rows, EventLogInput, event kinds
   vault/
     vault.go                  The rules for secrets: encrypt/decrypt, store, and log every operation
@@ -72,6 +73,7 @@ internal/
     system.go                 /v0/health, /v0/ready, /v0/auth, /v0/version
     bootstrap.go              /v0/bootstrap/lighthouse
     respond.go                JSON envelope helpers (writeResponse / writeError)
+    logging.go                One log line per request (never values or tokens)
     api_types.go              JSON response types
   cli/
     shell.go                  CLI struct, the prompt loop, Exec (one command), confirmations
@@ -138,6 +140,7 @@ All configuration comes from environment variables. `config.Load()` reads them f
 | `APP_ENV_PATH` | No | `config` | The `.env` file to load first, and where generated secrets are saved. Default: the `.env` file that was loaded. |
 | `APP_MARKER_PATH` | No | `bootstrap.Gate` | Directory for the bootstrap state file (`bootstrap.json`). Default: `/app/vault/markers`. The older name `APP_MARKER_DIR` also works. |
 | `COVE_BOOTSTRAP_ALLOWED_CIDRS` | No | `bootstrap.Gate` | Comma-separated networks and/or addresses that may use the bootstrap endpoint, e.g. `172.18.0.0/16`. Empty allows any address. An invalid entry stops startup. |
+| `COVE_EVENT_LOG_RETENTION_DAYS` | No | `main` | Removes *read* events older than this many days, at startup and then daily. Creates, updates, deletes and renames are always kept. Empty keeps everything. |
 | `APP_ENV` | No | — | `DEV` / `PROD` label. Not read by the code yet. |
 
 Generated secrets use `encryption.GenerateSecret(n)`: `n` characters from `[a-zA-Z0-9]`, picked with `crypto/rand`.
@@ -180,6 +183,8 @@ Roles, the database itself, and connect permissions are created once per environ
 | `00005_secret_key_format_check.sql` | Key format rule (`[A-Za-z0-9._-]`, 1–256 chars), `NOT VALID` so existing rows aren't checked |
 | `00006_event_log_rename_and_detail.sql` | Adds the `rename` event kind and a `detail` column (e.g. "renamed from X", "restored version 3") |
 | `00007_bootstrap_log.sql` | `cove.bootstrap_log`: every bootstrap request (time, address, outcome). Append-only for `cove_app` |
+| `00008_clear_read_event_values.sql` | Clears the encrypted value copies older read events stored (reads no longer store one) |
+| `00009_prune_read_events.sql` | `cove.prune_read_events(interval)`: removes old read events for `COVE_EVENT_LOG_RETENTION_DAYS`. Runs as `cove_owner`; `cove_app` may only call it |
 
 Running them:
 
@@ -212,14 +217,18 @@ Every operation in `vault` writes one row through `LogEvent`:
 | `kind` | `old_encrypted_value` | `new_encrypted_value` | Written by |
 |---|---|---|---|
 | `create` | `NULL` | new ciphertext | `Vault.Create` |
-| `read` | current ciphertext | `NULL` | `Vault.Get` (API) / `Vault.Show` (CLI `get`) |
+| `read` | `NULL` | `NULL` | `Vault.Get` (API) / `Vault.Show` (CLI `get`) |
 | `update` | previous ciphertext | new ciphertext | `Vault.Update`, `Vault.Restore` |
 | `delete` | deleted ciphertext | `NULL` | `Vault.Delete` |
 | `rename` | `NULL` | `NULL` | `Vault.Rename`, once under the old key and once under the new |
 
 `kind` is the enum `cove.secret_event_kind`. `detail` holds optional context such as "renamed from X" or "restored version 3". `source` is the `X-Cove-Source` header value for API calls, or `cove_cli` for CLI calls. `secret_version` is the secret's version after the operation. `occurred_at` is set automatically.
 
-The log holds ciphertext only. With `VAULT_ENCRYPTION_KEY` you can decrypt old values to recover a previous version or a deleted secret. Errors from `LogEvent` are ignored (`_ = d.LogEvent(...)`), so a failed log write never fails the operation. The table is **append-only for `cove_app`**: it has `SELECT` and `INSERT` only, so the running app can't rewrite history.
+The log holds ciphertext only, and only on the events that change a value (reads record who read which version, not the value). `restore` uses it to bring back earlier values.
+
+**Every operation and its event are saved in one transaction.** If the event can't be recorded, the operation fails and nothing changes, so nothing happens without a record. Updates lock the secret's row first, so concurrent changes are applied and logged one after another.
+
+The table is **append-only for `cove_app`**: it has `SELECT` and `INSERT` only, so the running app can't rewrite history. The one exception is `COVE_EVENT_LOG_RETENTION_DAYS`, which removes old *read* events through a function that can't touch anything else.
 
 You don't need SQL to read it: the CLI's `history <key>` and `info <key>` show a secret's events and last read, and `restore` brings back earlier values.
 
@@ -275,11 +284,11 @@ There is only one token. Every client gets the same access: full read/write to e
 
 | Method | Path | Auth | `X-Cove-Source` | Purpose |
 |---|---|---|---|---|
-| any | `/v0/health` | no | no | Liveness: the HTTP server is up |
-| any | `/v0/ready` | no | no | Readiness: the database is reachable |
-| any | `/v0/version` | yes | no | The running Cove version |
+| GET | `/v0/health` | no | no | Liveness: the HTTP server is up |
+| GET | `/v0/ready` | no | no | Readiness: the database is reachable |
+| GET | `/v0/version` | yes | no | The running Cove version |
 | GET | `/v0/bootstrap/lighthouse` | no | no | Token handout while opened with `bootstrap open` ([§7](#7-bootstrap-flow)) |
-| any | `/v0/auth` | yes | no | Checks that the token is valid |
+| GET | `/v0/auth` | yes | no | Checks that the token is valid |
 | GET | `/v0/secrets` | yes | no | List metadata for all secrets |
 | GET | `/v0/secrets/{key}` | yes | **yes** | Read (decrypted) value |
 | POST | `/v0/secrets/{key}` | yes | **yes** | Create |
@@ -341,17 +350,19 @@ If the vault is empty, `secrets` is `[]`. A DB error returns `500 get_all`.
 ```json
 { "success": true, "data": { "key": "my-api-key", "value": "abc123", "version": 3 } }
 ```
-Every failure (missing key, decrypt error, DB error) returns `404 not_found`.
+A missing key returns `404 not_found`. A value that can't be decrypted (usually a changed `VAULT_ENCRYPTION_KEY`) returns `500 decrypt_error`, and a database error `500 read_error`.
 
 **`POST /v0/secrets/{key}`** with body `{ "value": "..." }` returns `201`:
 ```json
 { "success": true, "data": { "key": "my-api-key", "action": "created", "message": "my-api-key has been created." } }
 ```
-Every failure, including a key that already exists, returns `500 create_error`.
+A key that already exists returns `409 already_exists`; other failures `500 create_error`.
 
-**`PATCH /v0/secrets/{key}`** with body `{ "value": "..." }` returns `200` with `"action": "updated"`. Every failure, including a key that doesn't exist, returns `500 update_error`.
+**`PATCH /v0/secrets/{key}`** with body `{ "value": "..." }` returns `200` with `"action": "updated"`. A key that doesn't exist returns `404 not_found`; other failures `500 update_error`.
 
-**`DELETE /v0/secrets/{key}`** returns `200` with `"action": "deleted"`. Every failure returns `404 not_found`.
+**`DELETE /v0/secrets/{key}`** returns `200` with `"action": "deleted"`. A missing key returns `404 not_found`; other failures `500 delete_error`.
+
+Before v1.0.0, every read/delete failure was `404` and every create/update failure `500`. CoveClient only checks the success codes, so the more precise errors don't affect it.
 
 ### Error type reference
 
@@ -359,10 +370,12 @@ Every failure, including a key that already exists, returns `500 create_error`.
 |---|---|---|
 | `missing_token`, `invalid_token_format`, `invalid_token` | 401 | auth middleware |
 | `missing_key`, `invalid_key`, `missing_source`, `invalid_body` | 400 | secret routes |
-| `not_found` | 404 | unknown `/v0/secrets*` path, GET/DELETE failure |
+| `not_found` | 404 | unknown `/v0/secrets*` path; missing key on GET, PATCH or DELETE |
+| `already_exists` | 409 | POST for a key that exists |
 | `method_not_allowed` | 405 | wrong method |
 | `bootstrap_locked`, `bootstrap_expired`, `bootstrap_forbidden` | 403 | bootstrap endpoint closed / window ran out / address not allowed ([§7](#7-bootstrap-flow)) |
-| `get_all`, `create_error`, `update_error`, `server_error`, `marker_error` | 500 | DB / config / bootstrap marker failures |
+| `decrypt_error` | 500 | the stored value can't be decrypted |
+| `get_all`, `read_error`, `create_error`, `update_error`, `delete_error`, `server_error`, `marker_error` | 500 | database / config / bootstrap state failures |
 | `not_ready` | 503 | `/v0/ready` when the database is unreachable |
 
 ### curl examples
@@ -582,19 +595,10 @@ Cove speaks plain HTTP and has no rate limiting. Keep it on the internal Docker 
 
 ## 12. Known issues and gotchas
 
-These remain in the current code. They're grouped by how much they matter.
+These remain in the current code.
 
 > See [IMPROVEMENTS.md](IMPROVEMENTS.md) for ratings (criticality, effort, improvement), proposed fixes, and a suggested order of work.
 
-### API behavior
-
-1. Status codes are coarse: a duplicate create returns `500` (not `409`), updating a missing key returns `500` (not `404`), and a decrypt failure on GET returns `404`.
-2. `/v0/health`, `/v0/ready`, `/v0/auth` and `/v0/version` accept any HTTP method.
-3. `read_count` goes up even when decryption then fails.
-4. There's one global token. Clients can't be given read-only or per-secret access; bootstrap hands out that same token.
-
-### Process and runtime
-
-5. `LogEvent` errors are thrown away, so a broken `event_log` table fails silently.
-6. The Dockerfile runs `mkdir -p /app/cove`, which isn't used anywhere.
-7. `restore` only sees history recorded under the key's current name; values from before a `rename` are under the old name.
+1. There's one global token. Clients can't be given read-only or per-secret access, and bootstrap hands out that same token.
+2. `restore` only sees history recorded under the key's current name; values from before a `rename` are under the old name.
+3. Because the audit log is mandatory, a broken `event_log` table (e.g. a lost `INSERT` grant) makes reads and writes fail until it's fixed. The error message and the server log name the cause.
