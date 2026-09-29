@@ -23,6 +23,14 @@ var (
 	// ErrDecrypt is returned by Get when a stored value can't be decrypted,
 	// usually because VAULT_ENCRYPTION_KEY changed after it was stored.
 	ErrDecrypt = errors.New("the stored value couldn't be decrypted")
+
+	// ErrVersionNotFound is returned by Restore when the requested version
+	// isn't in the secret's history.
+	ErrVersionNotFound = errors.New("that version isn't in the secret's history")
+
+	// ErrNothingToRestore is returned by Restore when there's no earlier
+	// value, e.g. the secret is at version 1 or already has that value.
+	ErrNothingToRestore = errors.New("there's no earlier value to restore")
 )
 
 // Store is the persistence a Vault needs. *database.Database implements it.
@@ -37,6 +45,7 @@ type Store interface {
 	ListEvents(ctx context.Context, key string, limit int) ([]database.Event, error)
 	LastEvent(ctx context.Context, key string, kind database.EventKind) (database.Event, bool, error)
 	RenameSecret(ctx context.Context, oldKey string, newKey string) (database.Secret, error)
+	ValueVersions(ctx context.Context, key string) (map[int]string, error)
 }
 
 // Event is one entry in a secret's history.
@@ -247,6 +256,90 @@ func (v *Vault) Rename(ctx context.Context, oldKey string, newKey string, source
 		})
 	}
 	return nil
+}
+
+// Restore brings back an earlier value of key. version picks which one;
+// version <= 0 means the value before the current one, or for a deleted secret
+// its last value. The value is written as a new version (or recreates a
+// deleted secret), so nothing is overwritten or lost. It returns the secret
+// after the restore and the version the value came from.
+func (v *Vault) Restore(ctx context.Context, key string, version int, source string) (Secret, int, error) {
+	current, err := v.store.GetSecret(ctx, key)
+	exists := err == nil
+	if err != nil && !errors.Is(err, ErrNotFound) {
+		return Secret{}, 0, err
+	}
+
+	versions, err := v.store.ValueVersions(ctx, key)
+	if err != nil {
+		return Secret{}, 0, err
+	}
+
+	target := version
+	if target <= 0 {
+		if exists {
+			target = current.Version - 1
+		} else {
+			for ver := range versions {
+				target = max(target, ver)
+			}
+		}
+	}
+
+	if exists && target == current.Version {
+		return Secret{}, 0, fmt.Errorf("%q is already at version %d: %w", key, target, ErrNothingToRestore)
+	}
+	encrypted, ok := versions[target]
+	if !ok {
+		if version <= 0 {
+			return Secret{}, 0, ErrNothingToRestore
+		}
+		return Secret{}, 0, fmt.Errorf("version %d of %q: %w", target, key, ErrVersionNotFound)
+	}
+
+	value, err := v.cipher.Decrypt(encrypted)
+	if err != nil {
+		return Secret{}, 0, fmt.Errorf("restore %q: %w (%v)", key, ErrDecrypt, err)
+	}
+	reencrypted, err := v.cipher.Encrypt(value)
+	if err != nil {
+		return Secret{}, 0, fmt.Errorf("encrypt: %w", err)
+	}
+
+	detail := fmt.Sprintf("restored version %d", target)
+
+	if exists {
+		updated, err := v.store.UpdateSecretValue(ctx, key, reencrypted)
+		if err != nil {
+			return Secret{}, 0, err
+		}
+		_ = v.store.LogEvent(ctx, database.EventLogInput{
+			SecretID:          updated.ID,
+			SecretKey:         updated.Key,
+			SecretVersion:     updated.Version,
+			Kind:              database.EventUpdate,
+			Source:            source,
+			OldEncryptedValue: &current.EncryptedValue,
+			NewEncryptedValue: &updated.EncryptedValue,
+			Detail:            detail,
+		})
+		return fromRow(updated), target, nil
+	}
+
+	created, err := v.store.InsertSecret(ctx, key, reencrypted)
+	if err != nil {
+		return Secret{}, 0, err
+	}
+	_ = v.store.LogEvent(ctx, database.EventLogInput{
+		SecretID:          created.ID,
+		SecretKey:         created.Key,
+		SecretVersion:     created.Version,
+		Kind:              database.EventCreate,
+		Source:            source,
+		NewEncryptedValue: &created.EncryptedValue,
+		Detail:            detail + " of the deleted secret",
+	})
+	return fromRow(created), target, nil
 }
 
 // History returns key's events, newest first; limit <= 0 returns them all. It

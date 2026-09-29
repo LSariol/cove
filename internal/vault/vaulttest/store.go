@@ -131,6 +131,29 @@ func (s *Store) RenameSecret(ctx context.Context, oldKey string, newKey string) 
 	return secret, nil
 }
 
+func (s *Store) ValueVersions(ctx context.Context, key string) (map[int]string, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
+	versions := make(map[int]string)
+	for _, e := range s.Events {
+		if e.SecretKey != key {
+			continue
+		}
+		switch {
+		case (e.Kind == database.EventCreate || e.Kind == database.EventUpdate) && e.NewEncryptedValue != nil:
+			versions[e.SecretVersion] = *e.NewEncryptedValue
+		case e.Kind == database.EventDelete && e.OldEncryptedValue != nil:
+			versions[e.SecretVersion] = *e.OldEncryptedValue
+		}
+	}
+
+	if len(versions) == 0 {
+		return nil, fmt.Errorf("value history for %q: %w", key, database.ErrNotFound)
+	}
+	return versions, nil
+}
+
 func (s *Store) LogEvent(ctx context.Context, logInfo database.EventLogInput) error {
 	s.mu.Lock()
 	defer s.mu.Unlock()

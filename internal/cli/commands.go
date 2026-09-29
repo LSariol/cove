@@ -90,6 +90,16 @@ func commandTable(embedded bool) []command {
 			complete: (*CLI).keyNames,
 		},
 		{
+			names: []string{"restore"},
+			usages: []usage{
+				{forms: []string{"<key> [--yes]"}, help: "Brings back the value before the current one, or a deleted secret's last value."},
+				{forms: []string{"<key> <version> [--yes]"}, help: "Brings back the value from that version (see \"history <key>\").\n" +
+					"      The restored value is saved as a new version, so nothing is lost."},
+			},
+			run:      (*CLI).restore,
+			complete: (*CLI).keyNames,
+		},
+		{
 			names:    []string{"info", "i"},
 			usages:   []usage{{forms: []string{"<key>"}, help: "Shows a secret's details and when it was last read. Never shows the value."}},
 			run:      (*CLI).info,

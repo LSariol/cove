@@ -41,15 +41,7 @@ func (c *CLI) create(ctx context.Context, args []string) error {
 }
 
 func (c *CLI) delete(ctx context.Context, args []string) error {
-	skipConfirm := false
-	var rest []string
-	for _, arg := range args[1:] {
-		if arg == "--yes" || arg == "-y" {
-			skipConfirm = true
-		} else {
-			rest = append(rest, arg)
-		}
-	}
+	skipConfirm, rest := takeYesFlag(args[1:])
 
 	if len(rest) != 1 {
 		return usageError{form: "delete <key> [--yes]"}
