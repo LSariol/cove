@@ -84,6 +84,16 @@ func commandTable(embedded bool) []command {
 			run: (*CLI).list,
 		},
 		{
+			names: []string{"generate"},
+			usages: []usage{{
+				forms: []string{"<key> [length] [--yes]"},
+				help: "Creates a secret with a random value (letters and digits, 32 characters\n" +
+					"      unless given) and shows it. If the key exists, asks before replacing its value.",
+			}},
+			run:      (*CLI).generate,
+			complete: (*CLI).keyNames,
+		},
+		{
 			names:    []string{"rename"},
 			usages:   []usage{{forms: []string{"<key> <new-key>"}, help: "Renames a secret, keeping its value, version and history.\n      Apps using the old key stop finding it."}},
 			run:      (*CLI).rename,

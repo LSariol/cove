@@ -93,9 +93,11 @@ func (c *CLI) complete(line string, pos int, key rune) (string, int, bool) {
 	completed := commonPrefix(matches)
 	if len(matches) == 1 {
 		completed += " "
-	} else if completed == word && c.term != nil {
+	} else if completed == word {
 		// Nothing more to complete: show the options instead.
-		c.term.Write([]byte(strings.Join(matches, "  ") + "\n"))
+		if c.term != nil {
+			c.term.Write([]byte(strings.Join(matches, "  ") + "\n"))
+		}
 		return "", 0, false
 	}
 

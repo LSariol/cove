@@ -22,7 +22,8 @@ func TestTabCompletion(t *testing.T) {
 		line string
 		want string // "" means no completion
 	}{
-		{"ge", "get "}, // command name
+		{"gen", "generate "}, // command name
+		{"ge", ""},           // get and generate: nothing more to complete (Tab again lists them)
 		{"get LIGH", "get LIGHTHOUSE_GITHUB_PAT "}, // single key match
 		{"get MY", "get MYAPP_"},                   // common prefix of two keys
 		{"delete MYAPP_D", "delete MYAPP_DB_URL "}, // other key commands
