@@ -3,12 +3,17 @@
 package bootstrap
 
 import (
+	"errors"
 	"fmt"
+	"io/fs"
 	"os"
 	"path/filepath"
 )
 
 const markerName = "bootstrap_completed"
+
+// ErrLocked is returned by Lock when the marker already exists.
+var ErrLocked = errors.New("bootstrap is already locked")
 
 type Marker struct {
 	dir string
@@ -19,14 +24,18 @@ func NewMarker(dir string) *Marker {
 	return &Marker{dir: dir}
 }
 
-// Lock creates the marker. It fails if the marker already exists, so only one
-// caller can claim the bootstrap.
+// Lock creates the marker. It returns ErrLocked if the marker already exists,
+// so only one caller can claim the bootstrap. Any other error means the marker
+// couldn't be created at all (permissions, disk).
 func (m *Marker) Lock() error {
 	if err := os.MkdirAll(m.dir, 0o700); err != nil {
 		return fmt.Errorf("failed to create marker directory: %w", err)
 	}
 
 	f, err := os.OpenFile(m.path(), os.O_CREATE|os.O_EXCL|os.O_WRONLY, 0o600)
+	if errors.Is(err, fs.ErrExist) {
+		return ErrLocked
+	}
 	if err != nil {
 		return fmt.Errorf("failed to create marker file: %w", err)
 	}

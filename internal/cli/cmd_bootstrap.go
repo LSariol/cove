@@ -2,7 +2,10 @@ package cli
 
 import (
 	"context"
+	"errors"
 	"strings"
+
+	"github.com/LSariol/Cove/internal/bootstrap"
 )
 
 func (c *CLI) bootstrapCmd(ctx context.Context, args []string) {
@@ -25,6 +28,10 @@ func (c *CLI) bootstrapCmd(ctx context.Context, args []string) {
 
 	case "lock":
 		if err := c.bootstrap.Lock(); err != nil {
+			if errors.Is(err, bootstrap.ErrLocked) {
+				infoLog("Bootstrap is already locked.")
+				return
+			}
 			errorLog(err.Error())
 			return
 		}

@@ -1,8 +1,12 @@
 package server
 
 import (
+	"errors"
 	"fmt"
+	"log"
 	"net/http"
+
+	"github.com/LSariol/Cove/internal/bootstrap"
 )
 
 func (s *Server) bootstrapHandler(w http.ResponseWriter, r *http.Request) {
@@ -12,7 +16,12 @@ func (s *Server) bootstrapHandler(w http.ResponseWriter, r *http.Request) {
 	}
 
 	if err := s.bootstrap.Lock(); err != nil {
-		writeError(w, http.StatusForbidden, "bootstrap_locked", "bootstrap has already been completed")
+		if errors.Is(err, bootstrap.ErrLocked) {
+			writeError(w, http.StatusForbidden, "bootstrap_locked", "bootstrap has already been completed")
+			return
+		}
+		log.Printf("bootstrap: %v", err)
+		writeError(w, http.StatusInternalServerError, "marker_error", "the bootstrap marker could not be created")
 		return
 	}
 
