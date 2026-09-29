@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"strings"
+	"text/tabwriter"
 	"time"
 
 	"github.com/LSariol/Cove/internal/vault"
@@ -175,51 +176,39 @@ func (c *CLI) printSecrets(ctx context.Context, term string, mode string) error 
 		return nil
 	}
 
-	const (
-		keyW    = 35
-		dateW   = 19
-		versW   = 7
-		pulledW = 12
-		timeFmt = "2006-01-02 15:04:05"
-	)
+	printSecretTable(matched)
+
+	if len(matched) == len(secrets) {
+		info(fmt.Sprintf("%d %s", len(matched), plural(len(matched), "secret", "secrets")))
+	} else {
+		info(fmt.Sprintf("%d of %d secrets", len(matched), len(secrets)))
+	}
+	return nil
+}
+
+// printSecretTable writes secrets as aligned columns to stdout. The key column
+// is as wide as the longest key.
+func printSecretTable(secrets []vault.Secret) {
+	const timeFmt = "2006-01-02 15:04"
 
 	formatTime := func(t time.Time) string {
 		if t.IsZero() {
 			return "-"
 		}
-		return t.Format(timeFmt)
+		return t.Local().Format(timeFmt)
 	}
 
-	header := fmt.Sprintf(
-		"%-*s | %-*s | %-*s | %-*s | %-*s\n",
-		keyW, "Key",
-		dateW, "Date Added",
-		dateW, "Last Modified",
-		versW, "Version",
-		pulledW, "Times Pulled",
-	)
-
-	divider := fmt.Sprintln(
-		strings.Repeat("-", keyW) + "-+-" +
-			strings.Repeat("-", dateW) + "-+-" +
-			strings.Repeat("-", dateW) + "-+-" +
-			strings.Repeat("-", versW) + "-+-" +
-			strings.Repeat("-", pulledW),
-	)
-
-	fmt.Fprint(stdout, header)
-	fmt.Fprint(stdout, divider)
-
-	for _, entry := range matched {
-		row := fmt.Sprintf(
-			"%-*s | %-*s | %-*s | %-*d | %-*d\n",
-			keyW, entry.Key,
-			dateW, formatTime(entry.CreatedAt),
-			dateW, formatTime(entry.UpdatedAt),
-			versW, entry.Version,
-			pulledW, entry.ReadCount,
-		)
-		fmt.Fprint(stdout, row)
+	w := tabwriter.NewWriter(stdout, 0, 0, 2, ' ', 0)
+	fmt.Fprintln(w, "KEY\tVERSION\tREADS\tCREATED\tUPDATED")
+	for _, s := range secrets {
+		fmt.Fprintf(w, "%s\t%d\t%d\t%s\t%s\n", s.Key, s.Version, s.ReadCount, formatTime(s.CreatedAt), formatTime(s.UpdatedAt))
 	}
-	return nil
+	w.Flush()
+}
+
+func plural(n int, one string, many string) string {
+	if n == 1 {
+		return one
+	}
+	return many
 }
