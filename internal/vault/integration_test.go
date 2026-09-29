@@ -150,3 +150,39 @@ func TestIntegrationFailedDecryptIsNotCounted(t *testing.T) {
 		t.Fatalf("read count after a failed decrypt = %d, %v", info.ReadCount, err)
 	}
 }
+
+func TestIntegrationPruneReadEvents(t *testing.T) {
+	v, db := integrationVault(t)
+	ctx := context.Background()
+	key := uniqueKey(t, "prune")
+
+	if err := v.Create(ctx, key, "x", "test"); err != nil {
+		t.Fatal(err)
+	}
+	// An old read, and a recent one.
+	for _, age := range []string{"100 days", "1 hour"} {
+		_, err := db.Pool.Exec(ctx, `INSERT INTO cove.event_log (secret_key, secret_version, kind, source, occurred_at)
+			VALUES ($1, 1, 'read', 'test', now() - $2::interval)`, key, age)
+		if err != nil {
+			t.Fatal(err)
+		}
+	}
+
+	if _, err := db.PruneReadEvents(ctx, 90); err != nil {
+		t.Fatal(err)
+	}
+
+	events, _ := v.History(ctx, key, 0)
+	kinds := map[database.EventKind]int{}
+	for _, e := range events {
+		kinds[e.Kind]++
+	}
+	if kinds[database.EventRead] != 1 || kinds[database.EventCreate] != 1 {
+		t.Fatalf("after pruning: %v, want the recent read and the create kept", kinds)
+	}
+
+	// The app still can't delete log rows directly.
+	if _, err := db.Pool.Exec(ctx, `DELETE FROM cove.event_log WHERE secret_key = $1`, key); err == nil {
+		t.Fatal("cove_app deleted event log rows directly")
+	}
+}

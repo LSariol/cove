@@ -322,6 +322,17 @@ func (d *Database) RecentBootstraps(ctx context.Context, limit int) ([]Bootstrap
 	return attempts, rows.Err()
 }
 
+// PruneReadEvents removes read events older than days (at least 1), and
+// returns how many were removed. Other events are never removed.
+func (d *Database) PruneReadEvents(ctx context.Context, days int) (int64, error) {
+	var removed int64
+	err := d.conn().QueryRow(ctx, `SELECT cove.prune_read_events(make_interval(days => $1))`, days).Scan(&removed)
+	if err != nil {
+		return 0, fmt.Errorf("prune read events: %w", err)
+	}
+	return removed, nil
+}
+
 // CountSecrets returns how many secrets the vault holds.
 func (d *Database) CountSecrets(ctx context.Context) (int, error) {
 	var n int

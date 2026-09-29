@@ -11,6 +11,7 @@ import (
 	"os/signal"
 	"runtime/debug"
 	"syscall"
+	"time"
 
 	"github.com/LSariol/Cove/internal/bootstrap"
 	"github.com/LSariol/Cove/internal/cli"
@@ -105,6 +106,10 @@ func runServer(withShell bool) {
 		Version:      buildVersion(),
 	})
 
+	if days, _ := cfg.RetentionDays(); days > 0 { // validated above
+		go pruneReadEventsDaily(ctx, db, days)
+	}
+
 	if withShell {
 		// When stdin closes (no terminal attached) the CLI simply returns and
 		// the API keeps serving; `exit`, Ctrl+C and `docker stop` all cancel
@@ -119,6 +124,26 @@ func runServer(withShell bool) {
 		fatal(err)
 	}
 	log.Println("Cove stopped.")
+}
+
+// pruneReadEventsDaily removes read events older than days, now and then every
+// 24 hours, until ctx is cancelled (COVE_EVENT_LOG_RETENTION_DAYS).
+func pruneReadEventsDaily(ctx context.Context, db *database.Database, days int) {
+	for {
+		removed, err := db.PruneReadEvents(ctx, days)
+		switch {
+		case err != nil && ctx.Err() == nil:
+			log.Printf("event log retention: %v", err)
+		case removed > 0:
+			log.Printf("event log retention: removed %d read events older than %d days", removed, days)
+		}
+
+		select {
+		case <-ctx.Done():
+			return
+		case <-time.After(24 * time.Hour):
+		}
+	}
 }
 
 // runShell runs the interactive CLI on its own, next to a running server.

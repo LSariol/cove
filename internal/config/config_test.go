@@ -247,3 +247,22 @@ func TestBootstrapAllowed(t *testing.T) {
 		t.Fatalf("Validate with a bad entry = %v", err)
 	}
 }
+
+func TestRetentionDays(t *testing.T) {
+	cfg := validConfig()
+	if days, err := cfg.RetentionDays(); err != nil || days != 0 {
+		t.Fatalf("empty = %d, %v; want 0 (off)", days, err)
+	}
+
+	cfg.EventLogRetentionDays = " 90 "
+	if days, err := cfg.RetentionDays(); err != nil || days != 90 {
+		t.Fatalf("90 = %d, %v", days, err)
+	}
+
+	for _, bad := range []string{"0", "-5", "90d", "ninety"} {
+		cfg.EventLogRetentionDays = bad
+		if err := cfg.Validate(); err == nil {
+			t.Errorf("Validate accepted retention %q", bad)
+		}
+	}
+}

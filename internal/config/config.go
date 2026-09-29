@@ -7,6 +7,7 @@ import (
 	"io/fs"
 	"net/netip"
 	"os"
+	"strconv"
 	"strings"
 
 	"github.com/LSariol/Cove/internal/encryption"
@@ -24,6 +25,10 @@ type Config struct {
 	EnvPath            string // APP_ENV_PATH: file that generated secrets are written to (default: the .env file that was loaded)
 	MarkerDir          string // APP_MARKER_PATH (or APP_MARKER_DIR): bootstrap marker directory
 	Env                string // APP_ENV: "DEV" or "PROD", shown in the CLI prompt
+
+	// EventLogRetentionDays (COVE_EVENT_LOG_RETENTION_DAYS) removes read events
+	// older than this many days, daily. Empty means keep everything.
+	EventLogRetentionDays string
 
 	// BootstrapAllowedCIDRs (COVE_BOOTSTRAP_ALLOWED_CIDRS) limits which
 	// addresses may use the bootstrap endpoint: a comma-separated list of
@@ -81,6 +86,7 @@ func fromEnv(envFile string) Config {
 		Env:                os.Getenv("APP_ENV"),
 
 		BootstrapAllowedCIDRs: os.Getenv("COVE_BOOTSTRAP_ALLOWED_CIDRS"),
+		EventLogRetentionDays: os.Getenv("COVE_EVENT_LOG_RETENTION_DAYS"),
 	}
 
 	if cfg.EnvPath == "" {
@@ -110,11 +116,28 @@ func (c Config) Validate() error {
 	if _, err := c.BootstrapAllowed(); err != nil {
 		return err
 	}
+	if _, err := c.RetentionDays(); err != nil {
+		return err
+	}
 	if len(c.ClientSecret) < minSecretLength {
 		return fmt.Errorf("COVE_CLIENT_SECRET is too short (%d characters, need at least %d). "+
 			"Leave it empty to have Cove generate one, then update your clients", len(c.ClientSecret), minSecretLength)
 	}
 	return nil
+}
+
+// RetentionDays parses EventLogRetentionDays. 0 means retention is off.
+func (c Config) RetentionDays() (int, error) {
+	s := strings.TrimSpace(c.EventLogRetentionDays)
+	if s == "" {
+		return 0, nil
+	}
+
+	days, err := strconv.Atoi(s)
+	if err != nil || days < 1 {
+		return 0, fmt.Errorf("COVE_EVENT_LOG_RETENTION_DAYS must be a whole number of days (1 or more), got %q", s)
+	}
+	return days, nil
 }
 
 // BootstrapAllowed parses BootstrapAllowedCIDRs. A plain address counts as a
