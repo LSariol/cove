@@ -41,14 +41,30 @@ func (c *CLI) create(ctx context.Context, args []string) error {
 }
 
 func (c *CLI) delete(ctx context.Context, args []string) error {
-	if len(args) != 2 {
-		return usageError{form: "delete <key>"}
+	skipConfirm := false
+	var rest []string
+	for _, arg := range args[1:] {
+		if arg == "--yes" || arg == "-y" {
+			skipConfirm = true
+		} else {
+			rest = append(rest, arg)
+		}
 	}
-	key := args[1]
 
-	if !c.confirm(fmt.Sprintf("Delete %q? (y/N)", key)) {
-		info("Delete cancelled.")
-		return nil
+	if len(rest) != 1 {
+		return usageError{form: "delete <key> [--yes]"}
+	}
+	key := rest[0]
+
+	if !skipConfirm {
+		yes, answered := c.confirm(fmt.Sprintf("Delete %q? (y/N)", key))
+		if !answered {
+			return fmt.Errorf("Delete cancelled: no answer to the confirmation. Use --yes to delete without asking.")
+		}
+		if !yes {
+			info("Delete cancelled.")
+			return nil
+		}
 	}
 
 	if err := c.vault.Delete(ctx, key, source); err != nil {

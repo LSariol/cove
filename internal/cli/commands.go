@@ -65,7 +65,7 @@ func commandTable(embedded bool) []command {
 		},
 		{
 			names:    []string{"delete", "d"},
-			usages:   []usage{{forms: []string{"<key>"}, help: "Deletes a secret (asks for confirmation)."}},
+			usages:   []usage{{forms: []string{"<key> [--yes]"}, help: "Deletes a secret. Asks for confirmation unless --yes is given."}},
 			run:      (*CLI).delete,
 			complete: (*CLI).keyNames,
 		},

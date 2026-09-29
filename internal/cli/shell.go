@@ -128,9 +128,11 @@ func Report(err error) {
 	report(err)
 }
 
-// confirm asks a yes/no question and reports whether the answer was yes. With
-// line editing the question becomes the prompt for the answer.
-func (c *CLI) confirm(question string) bool {
+// confirm asks a yes/no question. yes reports whether the answer was yes;
+// answered is false when there was no input to answer with (e.g. a one-shot
+// command run without a terminal). With line editing the question becomes the
+// prompt for the answer.
+func (c *CLI) confirm(question string) (yes bool, answered bool) {
 	var answer string
 
 	if c.term != nil {
@@ -138,17 +140,18 @@ func (c *CLI) confirm(question string) bool {
 		line, err := c.term.ReadLine()
 		c.term.SetPrompt(c.prompt)
 		if err != nil {
-			return false
+			return false, false
 		}
 		answer = line
 	} else {
 		ask(question)
 		if !c.scanner.Scan() {
-			return false
+			fmt.Fprintln(stderr)
+			return false, false
 		}
 		answer = c.scanner.Text()
 	}
 
 	answer = strings.ToLower(strings.TrimSpace(answer))
-	return answer == "y" || answer == "yes"
+	return answer == "y" || answer == "yes", true
 }
