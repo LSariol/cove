@@ -70,7 +70,8 @@ func (s *Server) getAllSecrets(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	var pubList SecretSummaryList
+	// Always an array, even when empty: clients shouldn't have to handle null.
+	pubList := SecretSummaryList{Secrets: []SecretSummary{}}
 	for _, secret := range secrets {
 		pubList.Secrets = append(pubList.Secrets, SecretSummary{
 			Key:         secret.Key,
