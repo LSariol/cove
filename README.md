@@ -32,7 +32,7 @@ internal/server/          HTTP API: routing, middleware, and handlers
 internal/cli/             Interactive CLI for managing secrets directly
 ```
 
-Cove runs two things concurrently: the HTTP server (default port `2110` for dev, `2100` for prod) and an interactive CLI on stdin. The CLI connects to the same database as the API, so changes made via CLI are immediately visible through the API and vice versa.
+Cove runs the HTTP server (default port `2110` for dev, `2100` for prod), and has a CLI you can open alongside it (`cove shell`) or use for single commands (`cove list`). The CLI connects to the same database as the API, so changes made via CLI are immediately visible through the API and vice versa.
 
 ---
 
@@ -100,7 +100,7 @@ Then set `COVE_MIGRATE_DATABASE_URL` (as `cove_migrator`) and start Cove. It cre
    ./cove
    ```
 
-   The server starts on the port defined by `APP_PORT`. The interactive CLI prompt (`Cove CLI>`) appears immediately in the same terminal.
+   The server starts on the port defined by `APP_PORT`, with the CLI prompt (`cove (dev)>`) in the same terminal. Use `./cove serve` for the server alone, and `./cove shell` in another terminal for the CLI.
 
 ---
 
@@ -144,12 +144,11 @@ The included `docker-compose.yml` mounts external volumes for the `.env` file an
 
    The container exposes port `2100` and restarts automatically unless stopped. A health check polls `/v0/ready` (which checks the database) every 10 seconds.
 
-4. To access the interactive CLI inside the running container:
+4. To use the CLI inside the running container:
    ```bash
-   docker attach cove
+   docker exec -it cove /cove shell     # interactive, with Tab completion
+   docker exec cove /cove status        # or one command at a time
    ```
-
-   Use `Ctrl+P`, `Ctrl+Q` to detach without stopping the container.
 
 ---
 
@@ -318,21 +317,25 @@ This is intended for automated clients (e.g., [CoveClient](https://github.com/LS
 
 ## CLI Reference
 
-When Cove starts, a `Cove CLI>` prompt is available in the terminal (or via `docker attach`). All commands operate directly on the database.
+Open the prompt with `cove shell` (in Docker: `docker exec -it cove /cove shell`), or run one command with `cove <command>`. See [DOCUMENTATION.md §8](DOCUMENTATION.md#8-cli) for details.
 
-| Command | Alias | Usage | Description |
-|---------|-------|-------|-------------|
-| `get` | `g` | `get <key>` | Display the decrypted value of a secret |
-| `create` | `c` | `create <key> <value>` | Create a new secret |
-| `update` | `u` | `update <key> <value>` | Update an existing secret |
-| `delete` | `d` | `delete <key>` | Delete a secret (prompts for confirmation) |
-| `list` | `l` | `list` | List all secrets (metadata only) |
-| `list` | `l` | `list <term>` | List secrets whose keys start with `<term>` |
-| `list` | `l` | `list <term> fuzzy` | List secrets whose keys contain `<term>` |
-| `bootstrap` | `b` | `bootstrap clear` | Remove the bootstrap marker (re-enables the bootstrap endpoint) |
-| `bootstrap` | `b` | `bootstrap lock` | Create the bootstrap marker (disables the bootstrap endpoint) |
-| `help` | `h` | `help` | Show available commands |
-| `exit` | `quit` | `exit` | Shut down Cove |
+| Command | Usage | Description |
+|---------|-------|-------------|
+| `get` | `get <key>` | Print a secret's value |
+| `create` | `create <key> <value>` | Create a secret |
+| `update` | `update <key> <value>` | Change a secret's value (new version) |
+| `generate` | `generate <key> [length] [--yes]` | Create or replace a secret with a random value |
+| `delete` | `delete <key> [--yes]` | Delete a secret (asks unless `--yes`) |
+| `rename` | `rename <key> <new-key>` | Rename a secret, keeping its value and history |
+| `restore` | `restore <key> [version] [--yes]` | Bring back an earlier value or a deleted secret |
+| `list` | `list [prefix]` | List secrets (never values) |
+| `search` | `search <text>` | List secrets whose keys contain `<text>` |
+| `info` | `info <key>` | A secret's details and last read |
+| `history` | `history <key> [count]` | A secret's recent events |
+| `status` | `status` | Health overview |
+| `bootstrap` | `bootstrap <clear\|lock>` | Open or close the one-time bootstrap endpoint |
+| `help` | `help [command]` | All commands, or one |
+| `exit` | `exit` | Leave the shell |
 
 ---
 

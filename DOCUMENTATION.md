@@ -27,12 +27,12 @@ Companion client library: [CoveClient](https://github.com/LSariol/CoveClient). I
 
 ## 1. Overview
 
-Cove stores key/value secrets for other self-hosted projects. It is a single Go binary that does two things at once:
+Cove stores key/value secrets for other self-hosted projects. It is a single Go binary with two parts:
 
 - It runs an **HTTP API** on `APP_PORT`. Other apps call it (usually through CoveClient) to read and manage secrets.
-- It runs an **interactive CLI** on stdin (`Cove CLI>`), for managing secrets directly on the host or inside the container.
+- It has a **CLI** for managing secrets directly: an interactive prompt (`cove shell`, or on stdin with plain `cove`) and one-shot commands (`cove list`).
 
-Both use the same PostgreSQL connection pool, so a change made in one shows up in the other immediately.
+Both use the same database, so a change made in one shows up in the other immediately.
 
 Main properties:
 
@@ -49,7 +49,7 @@ Main properties:
 ## 2. Architecture
 
 ```
-cmd/cove/main.go              Entry point: reads config, wires packages together, runs `migrate` or the server + CLI
+cmd/cove/main.go              Entry point: picks the mode (server, serve, shell, one-shot command, migrate, version) and wires packages together
 internal/
   config/config.go            Config struct: every setting, read from the environment once
   encryption/
@@ -59,26 +59,31 @@ internal/
     database.go               pgxpool connection (New, Connect, Close)
     migrate.go, migrations/   goose migrations and the startup schema check
     store.go                  SQL queries only; values in and out are always encrypted
-    types.go                  Secret row, EventLogInput, event kinds
+    types.go                  Secret and Event rows, EventLogInput, event kinds
   vault/
     vault.go                  The rules for secrets: encrypt/decrypt, store, and log every operation
     keys.go                   ValidateKey
-  bootstrap/marker.go         Marker file that locks the bootstrap endpoint (Lock / Clear)
+  bootstrap/marker.go         Marker file that locks the bootstrap endpoint (Lock / Clear / Locked)
   server/
-    server.go                 Server struct, ListenAndServe
+    server.go                 Server struct; Run serves until stopped, then shuts down gracefully
     routes.go                 URL → handler table
     middleware.go             Bearer-token check
     secrets.go                /v0/secrets handlers
-    system.go                 /v0/health, /v0/auth
+    system.go                 /v0/health, /v0/ready, /v0/auth, /v0/version
     bootstrap.go              /v0/bootstrap/lighthouse
     respond.go                JSON envelope helpers (writeResponse / writeError)
     api_types.go              JSON response types
   cli/
-    shell.go                  CLI struct and the prompt loop
-    commands.go               Command table (names, aliases, usage, help) and help/exit
-    cmd_secrets.go            get / create / update / delete / list
+    shell.go                  CLI struct, the prompt loop, Exec (one command), confirmations
+    terminal.go               Line editing, history and Tab completion for `cove shell`
+    commands.go               Command table (names, aliases, usage, help, completion) and help/exit
+    cmd_secrets.go            get / create / update / delete / rename / list / search
+    cmd_generate.go           generate
+    cmd_restore.go            restore
+    cmd_history.go            info / history
+    cmd_status.go             status
     cmd_bootstrap.go          bootstrap clear / lock
-    output.go                 Colored output helpers
+    output.go                 stdout/stderr, symbols, color, and the prompt
 ```
 
 Dependencies point one way: `main` → `server` / `cli` → `vault` → `database` + `encryption`, with `bootstrap` used by `server` and `cli`. Only `config` reads environment variables; every other package gets its settings passed in.
@@ -96,12 +101,13 @@ Dependencies point one way: `main` → `server` / `cli` → `vault` → `databas
 2. `config.Ensure()` generates any missing `COVE_CLIENT_SECRET` / `VAULT_ENCRYPTION_KEY`, saves them to `APP_ENV_PATH`, and uses them straight away. Then `cfg.Validate()` stops startup if `COVE_DATABASE_URL` or `APP_PORT` is missing, or the client secret is shorter than 24 characters (a short vault key only logs a warning), and Cove logs its version. Startup errors print one line, `cove: <message>`, and exit with status 1.
 3. A context is created that is cancelled on `SIGINT` / `SIGTERM`.
 4. If `COVE_MIGRATE_DATABASE_URL` is set, pending database migrations are applied (see [§4](#4-database)). A failed migration stops startup.
-5. `database.New(cfg.DatabaseURL)` and `Connect()` opens a `pgxpool` and pings it with a 3-second timeout. If this fails, the process exits.
+5. `database.New(cfg.DatabaseURL)` and `Connect()` opens a `pgxpool` and pings it with a 3-second timeout.
 6. `CheckSchemaVersion()` confirms every migration built into this binary has been applied. If not, Cove stops with a message saying to set `COVE_MIGRATE_DATABASE_URL`.
 7. A `vault.Vault` is built from the database and an `encryption.Cipher`, and shared by the server and CLI.
-8. The HTTP server starts in a goroutine (`srv.Start()`).
-9. The CLI loop runs on the main goroutine (`cli.StartCLI(ctx)`).
-10. When stdin closes, `StartCLI` returns and `main` waits for a signal (`<-ctx.Done()`). So Cove can run headless: with no stdin attached, the API keeps serving.
+8. In plain `cove`, the CLI starts in its own goroutine on stdin (`cove serve` skips it). When stdin closes, the CLI simply returns and the API keeps serving.
+9. `srv.Run(ctx)` serves the API until the context is cancelled: by `SIGINT`/`SIGTERM` (Ctrl+C, `docker stop`) or the CLI's `exit`. It then stops accepting requests, gives those in progress up to 5 seconds, closes the database pool, and logs `Cove stopped.`
+
+`cove shell` and one-shot commands follow steps 1, 5 and 6 only: they use the server's `.env`, but never generate secrets or run migrations.
 
 ### Request flow
 
@@ -171,6 +177,7 @@ Roles, the database itself, and connect permissions are created once per environ
 | `00003_rename_columns.sql` | v1.0.0 column names, and replaces the broken `set_last_modified()` trigger with `set_updated_at()` |
 | `00004_event_log_history_index.sql` | Index for per-secret history lookups |
 | `00005_secret_key_format_check.sql` | Key format rule (`[A-Za-z0-9._-]`, 1–256 chars), `NOT VALID` so existing rows aren't checked |
+| `00006_event_log_rename_and_detail.sql` | Adds the `rename` event kind and a `detail` column (e.g. "renamed from X", "restored version 3") |
 
 Running them:
 
@@ -193,7 +200,7 @@ Rules for new migrations:
 | `key` | The name clients use. Unique. Must match `[A-Za-z0-9._-]`, 1–256 characters. |
 | `encrypted_value` | Encrypted with AES-GCM and base64url-encoded. Never plaintext. |
 | `version` | Starts at 1. `UpdateSecret` adds 1. |
-| `read_count` | Goes up by 1 on every `GetSecret` call (API **and** CLI `get`). Exposed in the API as `times_pulled`. |
+| `read_count` | Goes up by 1 every time an app reads the secret through the API. The CLI's `get` doesn't count. Exposed in the API as `times_pulled`. |
 | `created_at` / `updated_at` | `updated_at` is set by the `set_updated_at` trigger on any change except a `read_count`-only update. |
 
 ### `cove.event_log`
@@ -203,26 +210,16 @@ Every operation in `vault` writes one row through `LogEvent`:
 | `kind` | `old_encrypted_value` | `new_encrypted_value` | Written by |
 |---|---|---|---|
 | `create` | `NULL` | new ciphertext | `Vault.Create` |
-| `read` | current ciphertext | `NULL` | `Vault.Get` |
-| `update` | previous ciphertext | new ciphertext | `Vault.Update` |
+| `read` | current ciphertext | `NULL` | `Vault.Get` (API) / `Vault.Show` (CLI `get`) |
+| `update` | previous ciphertext | new ciphertext | `Vault.Update`, `Vault.Restore` |
 | `delete` | deleted ciphertext | `NULL` | `Vault.Delete` |
+| `rename` | `NULL` | `NULL` | `Vault.Rename`, once under the old key and once under the new |
 
-`kind` is the enum `cove.secret_event_kind`. `source` is the `X-Cove-Source` header value for API calls, or `cove_cli` for CLI calls. `secret_version` is the secret's version after the operation. `occurred_at` is set automatically.
+`kind` is the enum `cove.secret_event_kind`. `detail` holds optional context such as "renamed from X" or "restored version 3". `source` is the `X-Cove-Source` header value for API calls, or `cove_cli` for CLI calls. `secret_version` is the secret's version after the operation. `occurred_at` is set automatically.
 
 The log holds ciphertext only. With `VAULT_ENCRYPTION_KEY` you can decrypt old values to recover a previous version or a deleted secret. Errors from `LogEvent` are ignored (`_ = d.LogEvent(...)`), so a failed log write never fails the operation. The table is **append-only for `cove_app`**: it has `SELECT` and `INSERT` only, so the running app can't rewrite history.
 
-Useful queries:
-
-```sql
--- Who has been reading a secret?
-SELECT occurred_at, source FROM cove.event_log
-WHERE secret_key = 'my-key' AND kind = 'read'
-ORDER BY occurred_at DESC LIMIT 20;
-
--- History of a secret
-SELECT occurred_at, secret_version, kind, source FROM cove.event_log
-WHERE secret_key = 'my-key' ORDER BY occurred_at;
-```
+You don't need SQL to read it: the CLI's `history <key>` and `info <key>` show a secret's events and last read, and `restore` brings back earlier values.
 
 ---
 
@@ -400,10 +397,10 @@ The bootstrap endpoint lets a new client (named "Lighthouse" in the code) get `C
 Typical use:
 
 ```
-Cove CLI> bootstrap clear        # open the window
+cove> bootstrap clear        # open the window
           (start the new client; it calls Bootstrap() once and stores the token)
           (the first call automatically closes the window again)
-Cove CLI> bootstrap lock         # or close it by hand without it being used
+cove> bootstrap lock         # or close it by hand without it being used
 ```
 
 The marker directory is bind-mounted in Docker, so the lock state survives container restarts. On a fresh install there's no marker, so **the endpoint starts open**. Anyone who can reach the port before your client does gets the token. Run `bootstrap lock` right after the first deploy if you don't plan to use it.
@@ -412,23 +409,47 @@ The marker directory is bind-mounted in Docker, so the lock state survives conta
 
 ## 8. CLI
 
-The prompt is `Cove CLI>`. Input is split on whitespace (`strings.Fields`), so **keys and values can't contain spaces** from the CLI. Use the API for those. CLI actions go directly to the database (skipping HTTP and key validation) and are logged with source `cove_cli`.
+The CLI works directly on the vault (not through the HTTP API), and everything it does is logged with source `cove_cli`. There are three ways to run it:
+
+| Invocation | What it does |
+|---|---|
+| `cove shell` | Interactive prompt, e.g. `docker exec -it cove /cove shell`. On a terminal it has line editing, up/down history, and Tab completion of commands and secret keys. `exit`, Ctrl+D or Ctrl+C leave the shell; the server keeps running. |
+| `cove <command> [args]` | Runs one command and exits: `0` on success, `1` on failure. E.g. `docker exec cove /cove list MYAPP_`. |
+| `cove` (no arguments) | The server with the prompt on stdin, as in v0.2.0 (for `docker attach`). Here `exit` stops the whole server. No line editing. |
+
+Shell and one-shot mode use the server's `.env` but never generate secrets or run migrations (that's the server's job).
+
+The prompt shows the environment from `APP_ENV`: `cove (dev)>`, and `cove (prod)>` in red.
+
+### Commands
 
 | Command | Alias | Usage | Notes |
 |---|---|---|---|
-| `get` | `g` | `get <key>` | Prints the decrypted value. **Adds 1 to `read_count` and logs a `read` event.** |
-| `create` | `c` | `create <key> <value>` | |
-| `update` | `u` | `update <key> <value>` | Adds 1 to the version. |
-| `delete` | `d` | `delete <key>` | Asks for `y`/`yes` to confirm. |
-| `list` | `l` | `list` | All secrets, as a table (key, date added, last modified, version, times pulled). |
-| | | `list <term>` | Keys starting with `<term>` (case-insensitive). |
-| | | `list <term> fuzzy` / `list <term> f` | Keys containing `<term>` (case-insensitive). |
-| `bootstrap` | `b` | `bootstrap clear` | Deletes the marker, which **opens** the bootstrap endpoint. |
-| | | `bootstrap lock` | Creates the marker, which **closes** it. Errors if it's already locked. |
-| `help` | `h` | `help` | |
-| `exit` | `quit` | `exit` | Calls `os.Exit(0)` right away. |
+| `get` | `g` | `get <key>` | Prints only the value, so `value=$(cove get KEY)` works. Logged as a read, but **doesn't** add to `read_count` (that counts app reads). |
+| `create` | `c` | `create <key> <value>` | Refuses keys the API can't read. |
+| `update` | `u` | `update <key> <value>` | Reports the new version. |
+| `generate` | | `generate <key> [length] [--yes]` | Random value (letters and digits, 32 by default, 16–256), printed once. Asks before replacing an existing value. |
+| `delete` | `d` | `delete <key> [--yes]` | Asks for confirmation unless `--yes`. With no way to answer (e.g. `docker exec` without `-it`) it fails and suggests `--yes`. |
+| `rename` | | `rename <key> <new-key>` | Keeps the value, version and read count. Logged under both keys. |
+| `restore` | | `restore <key> [version] [--yes]` | Brings back the previous value, a specific version, or a deleted secret's last value. Saved as a new version, so nothing is lost. |
+| `list` | `l` | `list [prefix]` | Table of keys (optionally starting with `prefix`): version, reads, created, updated, and a count. Never shows values. |
+| `search` | `s` | `search <text>` | Keys containing `text` (not case-sensitive). The older `list <text> fuzzy` still works. |
+| `info` | `i` | `info <key>` | Version, app reads, when and by whom it was last read, created and updated times. For a deleted key, says when and by whom it was deleted. |
+| `history` | | `history <key> [count]` | The last `count` events (default 20): when, what, version, source, detail. Works for deleted keys. |
+| `status` | | `status` | Version, environment, database, schema version, number of secrets, bootstrap state. Non-zero exit when something needs attention. |
+| `bootstrap` | `b` | `bootstrap clear` / `bootstrap lock` | Opens or closes the one-time bootstrap endpoint ([§7](#7-bootstrap-flow)). |
+| `help` | `h` | `help [command]` | All commands, or one. |
+| `exit` | `quit` | `exit` | Leaves the shell (or stops the server in plain `cove`). |
 
-Output colors: green = success, yellow = warning, red = error, cyan = info, plain = tables.
+Keys and values are split on whitespace, so they can't contain spaces from the CLI; use the API for those.
+
+### Output
+
+Following the [clig.dev](https://clig.dev) conventions:
+
+- **Data goes to stdout, uncolored:** values, tables, help. Scripts can capture it.
+- **Messages go to stderr,** marked with a symbol so the meaning doesn't depend on color: `✓` success, `!` warning or wrong arguments (with the correct `Usage:`), `✗` error, `?` a question.
+- **Color only on a terminal,** and never when `NO_COLOR` is set, so `docker logs` and scripts get plain text.
 
 ---
 
@@ -477,7 +498,7 @@ Two-stage build: `golang:1.25.1-alpine` builds the binary, then it's copied to `
 | Network | `spark` (external, must already exist) |
 | `.env` | `/srv/server/storage/cove/.env` → `/app/vault/.env` (**read-only**) |
 | Markers | `/srv/server/storage/cove/markers` → `/app/vault/markers` |
-| `stdin_open` + `tty` | Keeps the CLI usable with `docker attach` |
+| `stdin_open` + `tty` | Keeps the older `docker attach` CLI working. Not needed with `docker exec` ([below](#using-the-cli-in-the-container)) |
 | Restart | `unless-stopped` |
 | Healthcheck | `wget -qO- http://localhost:2100/v0/ready` every 10s (unhealthy when the database is unreachable) |
 
@@ -511,8 +532,14 @@ State lives in Postgres and the bind mounts, so rebuilding the container is safe
 ### Using the CLI in the container
 
 ```bash
-docker attach cove        # detach with Ctrl+P, Ctrl+Q (Ctrl+C sends SIGINT to Cove)
+docker exec -it cove /cove shell       # interactive, with Tab completion; exit leaves the shell
+docker exec cove /cove list MYAPP_     # one command
+docker exec cove /cove status          # health overview; exits non-zero if something's wrong
 ```
+
+`docker exec` sessions aren't recorded in `docker logs`, and `exit` or Ctrl+C only end the session. A handy alias on the server: `alias cove='docker exec -it cove /cove shell'`.
+
+The older `docker attach cove` still works (detach with Ctrl+P, Ctrl+Q). There, `exit` and Ctrl+C stop Cove, and everything typed is recorded in `docker logs`.
 
 ---
 
@@ -533,7 +560,7 @@ Back up all of these. **Without the key, the DB dump is useless.**
 
 ### Recovering a deleted or overwritten secret
 
-Find the ciphertext in `cove.event_log.old_encrypted_value`, decrypt it with the vault key (same algorithm as [§5](#5-encryption)), and `create` / `update` it back.
+`restore <key>` brings back the previous value (or a deleted secret's last value); `restore <key> <version>` brings back a specific one. `history <key>` shows the versions. The restored value is saved as a new version.
 
 ### Network exposure
 
@@ -557,9 +584,6 @@ These remain in the current code. They're grouped by how much they matter.
 
 ### Process and runtime
 
-6. **Shutdown with a TTY attached:** on `SIGTERM` the context is cancelled, but `StartCLI` stays blocked reading stdin, so the process doesn't exit. Docker kills it after its stop timeout (10s by default).
-7. `exit` / `quit` call `os.Exit(0)`, so the DB pool isn't closed and the HTTP server isn't shut down gracefully.
-8. `log.Fatal` ends the whole process if the HTTP listener fails (for example, if the port is in use).
-9. `database.Connect` calls `os.Exit(1)` if `pgxpool.New` fails (for example, a malformed URL) instead of returning an error.
-10. `LogEvent` errors are thrown away, so a broken `event_log` table fails silently.
-11. The Dockerfile runs `mkdir -p /app/cove`, which isn't used anywhere.
+6. `LogEvent` errors are thrown away, so a broken `event_log` table fails silently.
+7. The Dockerfile runs `mkdir -p /app/cove`, which isn't used anywhere.
+8. `restore` only sees history recorded under the key's current name; values from before a `rename` are under the old name.
