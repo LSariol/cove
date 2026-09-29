@@ -10,10 +10,10 @@ func (s *Server) defineRoutes(mux *http.ServeMux) {
 	mux.HandleFunc("/v0/bootstrap/lighthouse", s.bootstrapHandler)
 
 	// Authenticated routes
-	mux.Handle("/v0/secrets", s.requireClientSecret(http.HandlerFunc(s.handleSecretsCollection)))
-	mux.Handle("/v0/secrets/", s.requireClientSecret(http.HandlerFunc(s.handleSecretID)))
-	mux.Handle("/v0/auth", s.requireClientSecret(getOnly(http.HandlerFunc(s.authHandler))))
-	mux.Handle("/v0/version", s.requireClientSecret(getOnly(http.HandlerFunc(s.versionHandler))))
+	mux.Handle("/v0/secrets", s.requireToken(http.HandlerFunc(s.handleSecretsCollection)))
+	mux.Handle("/v0/secrets/", s.requireToken(http.HandlerFunc(s.handleSecretID)))
+	mux.Handle("/v0/auth", s.requireToken(getOnly(http.HandlerFunc(s.authHandler))))
+	mux.Handle("/v0/version", s.requireToken(getOnly(http.HandlerFunc(s.versionHandler))))
 }
 
 // getOnly answers anything but GET (or HEAD) with 405.

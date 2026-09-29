@@ -21,9 +21,12 @@ type DB interface {
 
 // Options are the Server's settings.
 type Options struct {
-	ClientSecret string // bearer token clients must send; also what the bootstrap endpoint hands out
+	ClientSecret string // the master token, with access to every secret; also handed out by the bootstrap endpoint
 	Port         string
 	Version      string // reported by /v0/version
+
+	// Tokens checks per-project tokens. If nil, only the master token works.
+	Tokens TokenAuthenticator
 }
 
 type Server struct {
@@ -31,6 +34,7 @@ type Server struct {
 	bootstrap    *bootstrap.Gate
 	db           DB
 	clientSecret string
+	tokens       TokenAuthenticator
 	port         string
 	version      string
 }
@@ -42,6 +46,7 @@ func New(v *vault.Vault, gate *bootstrap.Gate, db DB, opts Options) *Server {
 		bootstrap:    gate,
 		db:           db,
 		clientSecret: opts.ClientSecret,
+		tokens:       opts.Tokens,
 		port:         opts.Port,
 		version:      opts.Version,
 	}

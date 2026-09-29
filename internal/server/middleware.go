@@ -1,13 +1,39 @@
 package server
 
 import (
+	"context"
 	"crypto/subtle"
+	"errors"
+	"log"
 	"net/http"
 	"strings"
+
+	"github.com/LSariol/Cove/internal/tokens"
 )
 
-// requireClientSecret is middleware that validates the Bearer token in the Authorization header.
-func (s *Server) requireClientSecret(next http.Handler) http.Handler {
+// TokenAuthenticator checks project tokens. *tokens.Manager implements it.
+type TokenAuthenticator interface {
+	Authenticate(ctx context.Context, value string) (tokens.Token, error)
+}
+
+// caller is who made a request: the master token (project is nil), or a
+// project token.
+type caller struct {
+	project *tokens.Token
+}
+
+type callerKey struct{}
+
+// callerFrom returns the caller that requireToken stored in ctx.
+func callerFrom(ctx context.Context) caller {
+	c, _ := ctx.Value(callerKey{}).(caller)
+	return c
+}
+
+// requireToken is middleware that accepts the master token
+// (COVE_CLIENT_SECRET) or a project token in the Authorization header, and
+// records which one was used for the handlers.
+func (s *Server) requireToken(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 
 		authHeader := r.Header.Get("Authorization")
@@ -21,15 +47,27 @@ func (s *Server) requireClientSecret(next http.Handler) http.Handler {
 			writeError(w, http.StatusUnauthorized, "invalid_token_format", "Authorization header must be in the form: Bearer <token>")
 			return
 		}
+		provided := tokenParts[1]
 
-		provided := []byte(tokenParts[1])
-		stored := []byte(s.clientSecret)
-
-		if subtle.ConstantTimeCompare(provided, stored) != 1 {
-			writeError(w, http.StatusUnauthorized, "invalid_token", "the provided token is invalid")
+		if s.clientSecret != "" && subtle.ConstantTimeCompare([]byte(provided), []byte(s.clientSecret)) == 1 {
+			next.ServeHTTP(w, r.WithContext(context.WithValue(r.Context(), callerKey{}, caller{})))
 			return
 		}
 
-		next.ServeHTTP(w, r)
+		if s.tokens != nil {
+			tok, err := s.tokens.Authenticate(r.Context(), provided)
+			switch {
+			case err == nil:
+				ctx := context.WithValue(r.Context(), callerKey{}, caller{project: &tok})
+				next.ServeHTTP(w, r.WithContext(ctx))
+				return
+			case !errors.Is(err, tokens.ErrNotFound):
+				log.Printf("check token: %v", err)
+				writeError(w, http.StatusServiceUnavailable, "auth_unavailable", "the token couldn't be checked right now; try again")
+				return
+			}
+		}
+
+		writeError(w, http.StatusUnauthorized, "invalid_token", "the provided token is invalid")
 	})
 }

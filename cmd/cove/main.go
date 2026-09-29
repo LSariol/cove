@@ -19,6 +19,7 @@ import (
 	"github.com/LSariol/Cove/internal/database"
 	"github.com/LSariol/Cove/internal/encryption"
 	"github.com/LSariol/Cove/internal/server"
+	"github.com/LSariol/Cove/internal/tokens"
 	"github.com/LSariol/Cove/internal/vault"
 )
 
@@ -104,6 +105,7 @@ func runServer(withShell bool) {
 		ClientSecret: cfg.ClientSecret,
 		Port:         cfg.Port,
 		Version:      buildVersion(),
+		Tokens:       tokens.NewManager(db),
 	})
 
 	if days, _ := cfg.RetentionDays(); days > 0 { // validated above

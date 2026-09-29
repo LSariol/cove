@@ -8,6 +8,7 @@ import (
 	"net/http"
 	"strings"
 
+	"github.com/LSariol/Cove/internal/tokens"
 	"github.com/LSariol/Cove/internal/vault"
 )
 
@@ -46,8 +47,16 @@ func (s *Server) handleSecretID(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	// A project token is recorded under its own name; the header can't
+	// change that. The master token is shared, so its caller names itself.
+	c := callerFrom(r.Context())
 	source := r.Header.Get("X-Cove-Source")
-	if source == "" {
+	if c.project != nil {
+		source = c.project.Name
+		if !s.allowed(w, r.Method, *c.project, id) {
+			return
+		}
+	} else if source == "" {
 		writeError(w, http.StatusBadRequest, "missing_source", "X-Cove-Source header is required (the name of the calling app)")
 		return
 	}
@@ -66,6 +75,28 @@ func (s *Server) handleSecretID(w http.ResponseWriter, r *http.Request) {
 	}
 }
 
+// allowed checks that a project token may do method on key, and answers 403
+// if not. The check doesn't depend on whether key exists, so a project can't
+// use it to find out which secrets other projects have.
+func (s *Server) allowed(w http.ResponseWriter, method string, tok tokens.Token, key string) bool {
+	switch method {
+	case http.MethodGet:
+		if tok.CanRead(key) {
+			return true
+		}
+		writeError(w, http.StatusForbidden, "forbidden_key", fmt.Sprintf("%s's token can't read %s", tok.Name, key))
+		return false
+	case http.MethodPost, http.MethodPatch, http.MethodDelete:
+		if tok.CanWrite(key) {
+			return true
+		}
+		writeError(w, http.StatusForbidden, "forbidden_key", fmt.Sprintf("%s's token can't change %s", tok.Name, key))
+		return false
+	default:
+		return true // answered with 405 by the caller
+	}
+}
+
 func (s *Server) getAllSecrets(w http.ResponseWriter, r *http.Request) {
 	secrets, err := s.vault.List(r.Context())
 	if err != nil {
@@ -74,9 +105,15 @@ func (s *Server) getAllSecrets(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	// A project token only sees the keys it can read.
+	project := callerFrom(r.Context()).project
+
 	// Always an array, even when empty: clients shouldn't have to handle null.
 	pubList := SecretSummaryList{Secrets: []SecretSummary{}}
 	for _, secret := range secrets {
+		if project != nil && !project.CanRead(secret.Key) {
+			continue
+		}
 		pubList.Secrets = append(pubList.Secrets, SecretSummary{
 			Key:         secret.Key,
 			Version:     secret.Version,
