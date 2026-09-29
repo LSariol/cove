@@ -93,32 +93,34 @@ func Store(file string, key string, value string) error {
 	return godotenv.Write(envs, file)
 }
 
-// Ensure checks that COVE_CLIENT_SECRET and VAULT_ENCRYPTION_KEY are present.
-// If any are missing, it will attempt to generate them and store them in the
-// file at cfg.EnvPath.
-func Ensure(cfg Config) error {
+// Ensure makes sure COVE_CLIENT_SECRET and VAULT_ENCRYPTION_KEY are set. Any
+// that are missing are generated, saved to the file at cfg.EnvPath, and set in
+// the returned Config, so this run uses them straight away.
+func Ensure(cfg Config) (Config, error) {
 
 	if cfg.ClientSecret == "" {
 		newValue, err := encryption.GenerateSecret(32)
 		if err != nil {
-			return err
+			return cfg, err
 		}
 
 		if err := Store(cfg.EnvPath, "COVE_CLIENT_SECRET", newValue); err != nil {
-			return err
+			return cfg, err
 		}
+		cfg.ClientSecret = newValue
 	}
 
 	if cfg.EncryptionKey == "" {
 		newValue, err := encryption.GenerateSecret(45)
 		if err != nil {
-			return err
+			return cfg, err
 		}
 
 		if err := Store(cfg.EnvPath, "VAULT_ENCRYPTION_KEY", newValue); err != nil {
-			return err
+			return cfg, err
 		}
+		cfg.EncryptionKey = newValue
 	}
 
-	return nil
+	return cfg, nil
 }

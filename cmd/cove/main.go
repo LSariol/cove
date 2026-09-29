@@ -29,7 +29,8 @@ func main() {
 		return
 	}
 
-	if err := config.Ensure(cfg); err != nil {
+	cfg, err = config.Ensure(cfg)
+	if err != nil {
 		panic(err)
 	}
 

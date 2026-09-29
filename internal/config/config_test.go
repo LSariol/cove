@@ -108,3 +108,39 @@ func TestMarkerDir(t *testing.T) {
 		t.Errorf("APP_MARKER_PATH should win, got %q", got)
 	}
 }
+
+func TestEnsureGeneratesAndUsesMissingSecrets(t *testing.T) {
+	path := writeEnvFile(t, t.TempDir(), "APP_PORT=2101\n")
+
+	cfg, err := Ensure(Config{EnvPath: path})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	if len(cfg.ClientSecret) != 32 || len(cfg.EncryptionKey) != 45 {
+		t.Fatalf("generated lengths = %d / %d, want 32 / 45", len(cfg.ClientSecret), len(cfg.EncryptionKey))
+	}
+
+	saved, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, want := range []string{cfg.ClientSecret, cfg.EncryptionKey, "APP_PORT"} {
+		if !strings.Contains(string(saved), want) {
+			t.Errorf(".env is missing %q", want)
+		}
+	}
+}
+
+func TestEnsureKeepsExistingSecrets(t *testing.T) {
+	path := writeEnvFile(t, t.TempDir(), "")
+
+	in := Config{EnvPath: path, ClientSecret: "existing-client-secret", EncryptionKey: "existing-encryption-key"}
+	out, err := Ensure(in)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if out != in {
+		t.Fatalf("Ensure changed existing values: %+v", out)
+	}
+}
