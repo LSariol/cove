@@ -4,7 +4,7 @@ A review of Cove v0.2.0: bugs, security concerns, and quality-of-life improvemen
 
 CoveClient has its own `IMPROVEMENTS.md`. Items that affect both repos are cross-referenced.
 
-> Nothing here has been implemented. This is a planning document. Unfamiliar terms are explained in the [Glossary](#10-glossary).
+> **Progress (v1.0.0, `release/1.0.0`):** most items are done; they're marked **Done** in the tables below, and the details sections are kept as the record of why. Still open: SEC-3 (network exposure; needs a decision about how clients reach Cove), SEC-9 (container hardening), SEC-11 (rate limiting), SEC-12 and QOL-9 (encryption key rotation), QOL-8 (batch fetch), and hidden value entry from QOL-2. Unfamiliar terms are explained in the [Glossary](#10-glossary).
 
 ---
 
@@ -57,16 +57,16 @@ With these rules, no project should need an immediate update.
 
 | ID | Issue | Criticality | Effort | Improvement | Compat |
 |---|---|---|---|---|---|
-| [SEC-1](#sec-1-secret-values-end-up-in-docker-logs) | Secret values end up in Docker logs (CLI via TTY) | **High** | M | High | Safe |
-| [SEC-2](#sec-2-bootstrap-endpoint-hands-out-the-master-token-with-few-safeguards) | Bootstrap hands out the master token with few safeguards | **High** | M | High | Safe/Opt-in |
+| [SEC-1](#sec-1-secret-values-end-up-in-docker-logs) | Secret values end up in Docker logs (CLI via TTY) — **Done** | **High** | M | High | Safe |
+| [SEC-2](#sec-2-bootstrap-endpoint-hands-out-the-master-token-with-few-safeguards) | Bootstrap hands out the master token with few safeguards — **Done** | **High** | M | High | Safe/Opt-in |
 | [SEC-3](#sec-3-api-published-on-every-host-interface-over-plain-http) | API published on every host interface over plain HTTP | **High**\* | S | High | Care |
-| [SEC-4](#sec-4-one-shared-master-token-for-every-app) | One shared master token for every app | Medium | XL | High | Opt-in |
-| [SEC-5](#sec-5-example-placeholder-becomes-a-real-vault-key) | Example placeholder `Kept Empty` becomes a real vault key | Medium | S | Medium | Safe |
-| [SEC-6](#sec-6-event-log-keeps-every-value-forever) | Event log keeps every value forever (including deleted ones and a copy per read) | Medium | M | Medium | Safe |
-| [SEC-7](#sec-7-no-http-server-timeouts) | No HTTP server timeouts | Low | S | Medium | Safe |
-| [SEC-8](#sec-8-audit-source-is-self-reported) | `X-Cove-Source` is self-reported and can be spoofed | Low | (SEC-4) | Low | Safe |
+| [SEC-4](#sec-4-one-shared-master-token-for-every-app) | One shared master token for every app — **Done** | Medium | XL | High | Opt-in |
+| [SEC-5](#sec-5-example-placeholder-becomes-a-real-vault-key) | Example placeholder `Kept Empty` becomes a real vault key — **Done** | Medium | S | Medium | Safe |
+| [SEC-6](#sec-6-event-log-keeps-every-value-forever) | Event log keeps every value forever (including deleted ones and a copy per read) — **Done** | Medium | M | Medium | Safe |
+| [SEC-7](#sec-7-no-http-server-timeouts) | No HTTP server timeouts — **Done** | Low | S | Medium | Safe |
+| [SEC-8](#sec-8-audit-source-is-self-reported) | `X-Cove-Source` is self-reported and can be spoofed — **Done** | Low | (SEC-4) | Low | Safe |
 | [SEC-9](#sec-9-container-hardening) | Container runs as root, base image unpinned | Low | S | Low | Safe |
-| [SEC-10](#sec-10-env-may-be-created-world-readable) | `.env` may be created world-readable | Low | S | Low | Safe |
+| [SEC-10](#sec-10-env-may-be-created-world-readable) | `.env` may be created world-readable — **Done** | Low | S | Low | Safe |
 | [SEC-11](#sec-11-no-rate-limiting) | No rate limiting on auth or bootstrap | Low | S | Low | Safe |
 | [SEC-12](#sec-12-ciphertext-isnt-bound-to-its-key-and-has-no-format-version) | Ciphertext isn't bound to its key and has no format version | Low | M | Low | Care |
 
@@ -76,40 +76,40 @@ With these rules, no project should need an immediate update.
 
 | ID | Issue | Criticality | Effort | Improvement | Compat |
 |---|---|---|---|---|---|
-| [BUG-1](#bug-1-generated-secrets-arent-loaded-on-first-run) | Generated secrets aren't loaded on first run, so values are encrypted with an empty key | **High** | S | High | Safe |
-| [BUG-2](#bug-2-ctrlc-and-shutdown-handling-are-broken) | Ctrl+C breaks the CLI silently, and `docker stop` hangs for 10s | **High** | M | High | Safe |
-| [BUG-3](#bug-3-health-check-ignores-the-database) | Health check ignores the database | Medium | S | Medium | Safe |
-| [BUG-4](#bug-4-crash-loop-when-a-secret-is-missing-from-the-read-only-env) | Crash loop when a secret is missing from the read-only `.env` | Medium | S | Medium | Safe |
-| [BUG-5](#bug-5-cli-skips-key-validation) | CLI skips key validation, so it can create keys the API can't reach | Medium | S | Medium | Safe |
-| [BUG-6](#bug-6-misleading-status-codes) | Misleading status codes (duplicate gives 500, missing gives 500, decrypt failure gives 404) | Medium | S | Medium | Safe |
-| [BUG-7](#bug-7-env-var-mismatches) | Env var mismatches (`APP_MARKER_DIR`/`PATH`, `APP_ENV_PATH` ignored on load) | Low | S | Medium | Safe |
-| [BUG-8](#bug-8-writes-and-audit-log-arent-atomic) | Writes and audit log aren't atomic, and log errors are ignored | Low | M | Medium | Safe |
-| [BUG-9](#bug-9-decrypt-can-panic-on-bad-data) | `Decrypt` can panic on bad data | Low | S | Low | Safe |
-| [BUG-10](#bug-10-bootstrap-errors-are-misreported) | Bootstrap errors are misreported (403 for any failure, raw error on `lock`) | Low | S | Low | Safe |
-| [BUG-11](#bug-11-read-counted-even-when-decrypt-fails) | Read counted and logged even when decrypt fails | Low | S | Low | Safe |
-| [BUG-12](#bug-12-delete-confirmation-uses-a-second-stdin-reader) | Delete confirmation uses a second stdin reader | Low | S | Low | Safe |
-| [BUG-13](#bug-13-hard-exits-skip-cleanup) | Hard exits (`os.Exit`, `log.Fatal`) skip cleanup | Low | S | Low | Safe |
-| [BUG-14](#bug-14-list-endpoint-returns-null-and-over-fetches) | List endpoint returns `null` when empty and fetches values it discards | Low | S | Low | Safe |
-| [BUG-15](#bug-15-unused-vaultjson-mount-can-create-a-directory) | Unused `vault.json` mount becomes a directory if the host file is missing | Low | S | Low | Safe |
+| [BUG-1](#bug-1-generated-secrets-arent-loaded-on-first-run) | Generated secrets aren't loaded on first run, so values are encrypted with an empty key — **Done** | **High** | S | High | Safe |
+| [BUG-2](#bug-2-ctrlc-and-shutdown-handling-are-broken) | Ctrl+C breaks the CLI silently, and `docker stop` hangs for 10s — **Done** | **High** | M | High | Safe |
+| [BUG-3](#bug-3-health-check-ignores-the-database) | Health check ignores the database — **Done** | Medium | S | Medium | Safe |
+| [BUG-4](#bug-4-crash-loop-when-a-secret-is-missing-from-the-read-only-env) | Crash loop when a secret is missing from the read-only `.env` — **Done** | Medium | S | Medium | Safe |
+| [BUG-5](#bug-5-cli-skips-key-validation) | CLI skips key validation, so it can create keys the API can't reach — **Done** | Medium | S | Medium | Safe |
+| [BUG-6](#bug-6-misleading-status-codes) | Misleading status codes (duplicate gives 500, missing gives 500, decrypt failure gives 404) — **Done** | Medium | S | Medium | Safe |
+| [BUG-7](#bug-7-env-var-mismatches) | Env var mismatches (`APP_MARKER_DIR`/`PATH`, `APP_ENV_PATH` ignored on load) — **Done** | Low | S | Medium | Safe |
+| [BUG-8](#bug-8-writes-and-audit-log-arent-atomic) | Writes and audit log aren't atomic, and log errors are ignored — **Done** | Low | M | Medium | Safe |
+| [BUG-9](#bug-9-decrypt-can-panic-on-bad-data) | `Decrypt` can panic on bad data — **Done** | Low | S | Low | Safe |
+| [BUG-10](#bug-10-bootstrap-errors-are-misreported) | Bootstrap errors are misreported (403 for any failure, raw error on `lock`) — **Done** | Low | S | Low | Safe |
+| [BUG-11](#bug-11-read-counted-even-when-decrypt-fails) | Read counted and logged even when decrypt fails — **Done** | Low | S | Low | Safe |
+| [BUG-12](#bug-12-delete-confirmation-uses-a-second-stdin-reader) | Delete confirmation uses a second stdin reader — **Done** | Low | S | Low | Safe |
+| [BUG-13](#bug-13-hard-exits-skip-cleanup) | Hard exits (`os.Exit`, `log.Fatal`) skip cleanup — **Done** | Low | S | Low | Safe |
+| [BUG-14](#bug-14-list-endpoint-returns-null-and-over-fetches) | List endpoint returns `null` when empty and fetches values it discards — **Done** | Low | S | Low | Safe |
+| [BUG-15](#bug-15-unused-vaultjson-mount-can-create-a-directory) | Unused `vault.json` mount becomes a directory if the host file is missing — **Done** | Low | S | Low | Safe |
 
 ### Quality-of-life improvements
 
 | ID | Improvement | Criticality | Effort | Improvement | Compat |
 |---|---|---|---|---|---|
-| [QOL-1](#qol-1-one-shot-cli-through-docker-exec) | One-shot CLI through `docker exec` (`cove get X`, `cove shell`) | Medium | M | **High** | Safe |
-| [QOL-2](#qol-2-safer-value-entry-hidden-input-spaces-generate) | Safer value entry: hidden input, spaces, `generate` | Medium | M | **High** | Safe |
-| [QOL-3](#qol-3-bootstrap-v2-time-boxed-logged-restricted) | Bootstrap v2: time-boxed, logged, restricted (see §4) | Medium | M | **High** | Safe/Opt-in |
-| [QOL-4](#qol-4-tests-and-ci) | Tests and CI | Medium | L | **High** | Safe |
-| [QOL-5](#qol-5-automatic-schema-setup) | Automatic schema setup on startup | Low | S | Medium | Safe |
-| [QOL-6](#qol-6-cli-history-and-status-commands) | CLI `history` and `status` commands | Low | M | Medium | Safe |
-| [QOL-7](#qol-7-structured-request-logging) | Structured request/audit logging (no values) | Low | S | Medium | Safe |
+| [QOL-1](#qol-1-one-shot-cli-through-docker-exec) | One-shot CLI through `docker exec` (`cove get X`, `cove shell`) — **Done** | Medium | M | **High** | Safe |
+| [QOL-2](#qol-2-safer-value-entry-hidden-input-spaces-generate) | Safer value entry: hidden input, spaces, `generate` — **Partly done** (`generate`; hidden input not added) | Medium | M | **High** | Safe |
+| [QOL-3](#qol-3-bootstrap-v2-time-boxed-logged-restricted) | Bootstrap v2: time-boxed, logged, restricted (see §4) — **Done** | Medium | M | **High** | Safe/Opt-in |
+| [QOL-4](#qol-4-tests-and-ci) | Tests and CI — **Done** | Medium | L | **High** | Safe |
+| [QOL-5](#qol-5-automatic-schema-setup) | Automatic schema setup on startup — **Done** | Low | S | Medium | Safe |
+| [QOL-6](#qol-6-cli-history-and-status-commands) | CLI `history` and `status` commands — **Done** | Low | M | Medium | Safe |
+| [QOL-7](#qol-7-structured-request-logging) | Structured request/audit logging (no values) — **Done** | Low | S | Medium | Safe |
 | [QOL-8](#qol-8-batch--prefix-fetch) | Batch or prefix fetch (load all of a project's secrets in one call) | Low | M | Medium | Safe |
 | [QOL-9](#qol-9-vault-key-rotation) | Vault key rotation command | Low | L | Medium | Care |
-| [QOL-10](#qol-10-event-log-retention) | Event log retention/pruning | Low | M | Medium | Safe |
-| [QOL-11](#qol-11-version-reporting) | Version reporting (`/v0/version`, banner, `version` command) | Low | S | Low | Safe |
-| [QOL-12](#qol-12-config-cleanup) | Config cleanup (`.env.example`, unused vars, one marker var) | Low | S | Low | Safe |
-| [QOL-13](#qol-13-line-editing-history-and-tab-completion) | Line editing, history, and tab completion in the interactive CLI | Low | M | Low | Safe |
-| [QOL-14](#qol-14-colour-handling) | Respect `NO_COLOR` / non-TTY output | Low | S | Low | Safe |
+| [QOL-10](#qol-10-event-log-retention) | Event log retention/pruning — **Done** | Low | M | Medium | Safe |
+| [QOL-11](#qol-11-version-reporting) | Version reporting (`/v0/version`, banner, `version` command) — **Done** | Low | S | Low | Safe |
+| [QOL-12](#qol-12-config-cleanup) | Config cleanup (`.env.example`, unused vars, one marker var) — **Done** | Low | S | Low | Safe |
+| [QOL-13](#qol-13-line-editing-history-and-tab-completion) | Line editing, history, and tab completion in the interactive CLI — **Done** | Low | M | Low | Safe |
+| [QOL-14](#qol-14-colour-handling) | Respect `NO_COLOR` / non-TTY output — **Done** | Low | S | Low | Safe |
 
 ---
 
@@ -302,7 +302,7 @@ Every item follows the same layout: **what's happening**, **why it matters**, **
 
 **Why it matters.** It's like giving every guest a master key to every room. If one project leaks it (in a log, a repo, or a hacked container), all your secrets are exposed. Changing the token means updating every project at the same moment.
 
-**The fix.** Give each project its own token, stored in a new `cove.clients` table. Each one can optionally be limited to certain keys (e.g. only `MYAPP_*`) or to read-only access. You'd create and cancel tokens with CLI commands like `token create myapp`, `token list`, and `token revoke myapp`. Cove would also know *which* project made each request, so the audit log becomes trustworthy (SEC-8).
+**The fix (done in v1.0.0 as `cove.tokens`; see DOCUMENTATION.md §6 "Project tokens").** Give each project its own token, stored in a new `cove.clients` table. Each one can optionally be limited to certain keys (e.g. only `MYAPP_*`) or to read-only access. You'd create and cancel tokens with CLI commands like `token create myapp`, `token list`, and `token revoke myapp`. Cove would also know *which* project made each request, so the audit log becomes trustworthy (SEC-8).
 
 **Will it break anything?** No. The master token keeps working. You move projects to their own tokens one at a time, whenever you like. This is the biggest job in this document, but also the biggest security gain.
 

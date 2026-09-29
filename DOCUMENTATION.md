@@ -1,6 +1,6 @@
 # Cove Documentation
 
-Full reference for Cove, a self-hosted secret vault. Version v0.2.0, API version `v0`.
+Full reference for Cove, a self-hosted secret vault. Version v1.0.0, API version `v0`.
 
 The [README](README.md) is a quick overview. This document goes further: how each piece works internally, how the server is deployed, how secrets are stored, and the known issues in the current code.
 
@@ -185,6 +185,7 @@ Roles, the database itself, and connect permissions are created once per environ
 | `00007_bootstrap_log.sql` | `cove.bootstrap_log`: every bootstrap request (time, address, outcome). Append-only for `cove_app` |
 | `00008_clear_read_event_values.sql` | Clears the encrypted value copies older read events stored (reads no longer store one) |
 | `00009_prune_read_events.sql` | `cove.prune_read_events(interval)`: removes old read events for `COVE_EVENT_LOG_RETENTION_DAYS`. Runs as `cove_owner`; `cove_app` may only call it |
+| `00010_tokens.sql` | `cove.tokens` (per-project tokens) and `cove.token_log` (every change to them; append-only for `cove_app`) |
 
 Running them:
 
@@ -222,7 +223,7 @@ Every operation in `vault` writes one row through `LogEvent`:
 | `delete` | deleted ciphertext | `NULL` | `Vault.Delete` |
 | `rename` | `NULL` | `NULL` | `Vault.Rename`, once under the old key and once under the new |
 
-`kind` is the enum `cove.secret_event_kind`. `detail` holds optional context such as "renamed from X" or "restored version 3". `source` is the `X-Cove-Source` header value for API calls, or `cove_cli` for CLI calls. `secret_version` is the secret's version after the operation. `occurred_at` is set automatically.
+`kind` is the enum `cove.secret_event_kind`. `detail` holds optional context such as "renamed from X" or "restored version 3". `source` is the token's name for API calls made with a project token, the `X-Cove-Source` header value for calls made with the master token, or `cove_cli` for CLI calls. `secret_version` is the secret's version after the operation. `occurred_at` is set automatically.
 
 The log holds ciphertext only, and only on the events that change a value (reads record who read which version, not the value). `restore` uses it to bring back earlier values.
 
@@ -231,6 +232,19 @@ The log holds ciphertext only, and only on the events that change a value (reads
 The table is **append-only for `cove_app`**: it has `SELECT` and `INSERT` only, so the running app can't rewrite history. The one exception is `COVE_EVENT_LOG_RETENTION_DAYS`, which removes old *read* events through a function that can't touch anything else.
 
 You don't need SQL to read it: the CLI's `history <key>` and `info <key>` show a secret's events and last read, and `restore` brings back earlier values.
+
+### `cove.tokens` and `cove.token_log`
+
+Per-project tokens ([§6](#project-tokens)). Manage them with the CLI's `token` command, not SQL.
+
+| Column | Notes |
+|---|---|
+| `name` | The project, e.g. `lighthouse`. Unique; lowercase letters, digits, `.`, `_`, `-`; can't start with `cove`. Recorded as the source of the project's requests. |
+| `token_hash` | SHA-256 of the token. **The token itself is never stored**; it's shown once, when created or rotated. |
+| `read_patterns` / `write_patterns` | What the token can reach (see below). Write patterns also allow reading. |
+| `created_at` / `rotated_at` / `last_used_at` | `last_used_at` is updated at most once a minute per token. |
+
+`cove.token_log` records every create, rotate, revoke, allow, deny, and key rename that changed a token, with the source (`cove_cli`). It's append-only for `cove_app`, and it outlives revoked tokens. `token show <name>` shows the latest entries. Each change and its log entry are saved in one transaction.
 
 ---
 
@@ -264,11 +278,13 @@ Base path: `/v0`. Every response is JSON with `Content-Type: application/json`.
 
 ### Authentication
 
-Every route except `/v0/health` and `/v0/bootstrap/lighthouse` needs:
+Every route except `/v0/health`, `/v0/ready` and `/v0/bootstrap/lighthouse` needs:
 
 ```
-Authorization: Bearer <COVE_CLIENT_SECRET>
+Authorization: Bearer <token>
 ```
+
+The token is either the **master token** (`COVE_CLIENT_SECRET`), with full read/write access to every secret, or a **project token**, limited to the keys it was given (next section).
 
 The middleware (`middleware.go`) checks these in order:
 
@@ -276,9 +292,30 @@ The middleware (`middleware.go`) checks these in order:
 |---|---|---|
 | Header missing | 401 | `missing_token` |
 | Not in the form `Bearer <token>` (case-sensitive `Bearer`) | 401 | `invalid_token_format` |
-| Token doesn't match (constant-time compare) | 401 | `invalid_token` |
+| The master token (constant-time compare) | — | accepted, full access |
+| A project token (looked up by its SHA-256 hash) | — | accepted, limited access |
+| The token store can't be reached | 503 | `auth_unavailable` (not 401, so a client doesn't conclude its token is wrong) |
+| Neither | 401 | `invalid_token` |
 
-There is only one token. Every client gets the same access: full read/write to every secret.
+### Project tokens
+
+Each project can have its own token instead of sharing the master token. Create them in the CLI:
+
+```
+cove> token create lighthouse --allow 'lighthouse.*' --allow shared.discord-webhook
+cove> token create botsuite   --allow 'botsuite.*'   --allow shared.tmdb-api-key --write 'botsuite.cache.*'
+```
+
+- **Patterns:** an exact key (`shared.tmdb-api-key`), a prefix ending in `*` (`lighthouse.*`), or `*` for every key. Keys are case-sensitive.
+- **Read vs write:** `--allow` patterns can be read. `--write` patterns can also be created, updated and deleted.
+- **Nothing is reachable unless a pattern covers it.** A key named `shared.*` isn't special; share it by adding it to each token that needs it (`token allow shared.x botsuite marquee`).
+- **What a project token changes in the API:**
+  - `GET /v0/secrets/{key}` needs a read (or write) pattern covering the key, and `POST`/`PATCH`/`DELETE` a write pattern. Otherwise the answer is `403 forbidden_key`, e.g. `marquee's token can't read botsuite.db-url`. The answer is the same whether or not the key exists, so a project can't probe for other projects' keys.
+  - `GET /v0/secrets` lists only the keys the token can read.
+  - The event log records the token's name as the source. `X-Cove-Source` isn't needed and is ignored, so the log can't be spoofed.
+- **The master token is unchanged** and keeps full access, so projects can move to their own tokens one at a time.
+
+See [§11](#moving-a-project-to-its-own-token) for moving a project over.
 
 ### Routes
 
@@ -289,11 +326,11 @@ There is only one token. Every client gets the same access: full read/write to e
 | GET | `/v0/version` | yes | no | The running Cove version |
 | GET | `/v0/bootstrap/lighthouse` | no | no | Token handout while opened with `bootstrap open` ([§7](#7-bootstrap-flow)) |
 | GET | `/v0/auth` | yes | no | Checks that the token is valid |
-| GET | `/v0/secrets` | yes | no | List metadata for all secrets |
-| GET | `/v0/secrets/{key}` | yes | **yes** | Read (decrypted) value |
-| POST | `/v0/secrets/{key}` | yes | **yes** | Create |
-| PATCH | `/v0/secrets/{key}` | yes | **yes** | Update |
-| DELETE | `/v0/secrets/{key}` | yes | **yes** | Delete |
+| GET | `/v0/secrets` | yes | no | List metadata for all secrets (a project token sees only its keys) |
+| GET | `/v0/secrets/{key}` | yes | master token only | Read (decrypted) value |
+| POST | `/v0/secrets/{key}` | yes | master token only | Create |
+| PATCH | `/v0/secrets/{key}` | yes | master token only | Update |
+| DELETE | `/v0/secrets/{key}` | yes | master token only | Delete |
 
 ### Checks on `/v0/secrets/{key}`
 
@@ -303,7 +340,8 @@ In `handleSecretID`, these run in order after auth:
 |---|---|---|
 | Empty key (`/v0/secrets/`) | 400 | `missing_key` |
 | Key longer than 256 bytes, or has a character outside `[A-Za-z0-9._-]` (so no `/`) | 400 | `invalid_key` |
-| `X-Cove-Source` missing | 400 | `missing_source` |
+| Project token doesn't cover the key (read for GET, write otherwise) | 403 | `forbidden_key` |
+| Master token and `X-Cove-Source` missing | 400 | `missing_source` |
 | Method not GET/POST/PATCH/DELETE | 405 | `method_not_allowed` |
 
 Request bodies (POST/PATCH) can be at most **64 KB** (`maxBodyBytes`). Anything larger, or invalid JSON, returns `400 invalid_body`. A body missing `value` is accepted and stores an empty string.
@@ -344,7 +382,7 @@ Returns `503 not_ready` when the database is unreachable. The Docker healthcheck
   }
 }
 ```
-If the vault is empty, `secrets` is `[]`. A DB error returns `500 get_all`.
+If the vault is empty (or a project token can read none of it), `secrets` is `[]`. A DB error returns `500 get_all`.
 
 **`GET /v0/secrets/{key}`**: adds 1 to `times_pulled` (`read_count` in the database) and logs a `read` event.
 ```json
@@ -372,11 +410,13 @@ Before v1.0.0, every read/delete failure was `404` and every create/update failu
 | `missing_key`, `invalid_key`, `missing_source`, `invalid_body` | 400 | secret routes |
 | `not_found` | 404 | unknown `/v0/secrets*` path; missing key on GET, PATCH or DELETE |
 | `already_exists` | 409 | POST for a key that exists |
+| `forbidden_key` | 403 | a project token that doesn't cover the key |
 | `method_not_allowed` | 405 | wrong method |
 | `bootstrap_locked`, `bootstrap_expired`, `bootstrap_forbidden` | 403 | bootstrap endpoint closed / window ran out / address not allowed ([§7](#7-bootstrap-flow)) |
 | `decrypt_error` | 500 | the stored value can't be decrypted |
 | `get_all`, `read_error`, `create_error`, `update_error`, `delete_error`, `server_error`, `marker_error` | 500 | database / config / bootstrap state failures |
 | `not_ready` | 503 | `/v0/ready` when the database is unreachable |
+| `auth_unavailable` | 503 | a project token couldn't be checked (database unreachable) |
 
 ### curl examples
 
@@ -396,15 +436,18 @@ curl -X DELETE -H "Authorization: Bearer $TOKEN" -H "X-Cove-Source: curl" $COVE/
 
 ## 7. Bootstrap flow
 
-The bootstrap endpoint gives a new client (e.g. Lighthouse) the client token (`COVE_CLIENT_SECRET`) before it has any credentials. Because it hands out a token that unlocks every secret, it's **closed unless you open it**, and then only briefly.
+The bootstrap endpoint gives a new client (e.g. Lighthouse) a token before it has any credentials: its own project token, or the master token (`COVE_CLIENT_SECRET`). Because it hands out a working token, it's **closed unless you open it**, and then only briefly.
 
 ### Onboarding a client
 
 ```
-cove> bootstrap open           # open for 10 minutes (or e.g. `bootstrap open 30m`)
+cove> token create lighthouse --allow 'lighthouse.*'   # once, if it has no token yet
+cove> bootstrap open lighthouse    # open for 10 minutes to hand out lighthouse's token (or e.g. `bootstrap open lighthouse 30m`)
         (start the client; it fetches the token once and saves it)
-cove> bootstrap status         # check it worked: shows the last handout and recent attempts
+cove> bootstrap status             # check it worked: shows the last handout and recent attempts
 ```
+
+Only a hash of each project token is stored, so `bootstrap open <project>` gives the project a **new** token to hand out; its previous token stops working. Plain `bootstrap open` hands out the master token, as before.
 
 With CoveClient, the client side is one call on every start: `LoadOrBootstrap(path)` reads the saved token, or fetches and saves it when there's none yet.
 
@@ -424,11 +467,11 @@ With CoveClient, the client side is one call on every start: `LoadOrBootstrap(pa
 - **Closed by default:** a fresh install never starts with the endpoint open.
 - **Allowed networks (optional):** set `COVE_BOOTSTRAP_ALLOWED_CIDRS`, e.g. `172.18.0.0/16` for the Docker network. The caller's address comes from the connection itself, never from headers like `X-Forwarded-For`.
 - **Every attempt is recorded** in `cove.bootstrap_log` (time, address, outcome) and in the server log. `bootstrap status` shows the last 5.
-- **CLI:** `bootstrap open [duration]` (1m–24h; `bootstrap clear` is the older name), `bootstrap lock` (close now, including any grace period), `bootstrap status` (or just `bootstrap`).
+- **CLI:** `bootstrap open [project] [duration]` (1m–24h; `bootstrap clear` is the older name), `bootstrap lock` (close now, including any grace period), `bootstrap status` (or just `bootstrap`; also shows which token it hands out).
 
 ### State
 
-The state lives in `<APP_MARKER_PATH>/bootstrap.json` (default `/app/vault/markers/bootstrap.json`, bind-mounted in Docker so it survives restarts): when the open window ends, and the last handout (time and address). It's written atomically. A missing file means closed; a corrupt one fails closed. The v0.2.0 marker file, `bootstrap_completed`, is ignored and removed on the next `open` or `lock`.
+The state lives in `<APP_MARKER_PATH>/bootstrap.json` (default `/app/vault/markers/bootstrap.json`, bind-mounted in Docker so it survives restarts): when the open window ends, the last handout (time and address), and, for `bootstrap open <project>`, the project's new token. That token is kept only while someone can still receive it: it's removed once the window and grace period are over, on `bootstrap lock`, or when the endpoint is opened again. The file is written atomically, readable only by its owner. A missing file means closed; a corrupt one fails closed. The v0.2.0 marker file, `bootstrap_completed`, is ignored and removed on the next `open` or `lock`.
 
 ---
 
@@ -454,15 +497,16 @@ The prompt shows the environment from `APP_ENV`: `cove (dev)>`, and `cove (prod)
 | `create` | `c` | `create <key> <value>` | Refuses keys the API can't read. |
 | `update` | `u` | `update <key> <value>` | Reports the new version. |
 | `generate` | | `generate <key> [length] [--yes]` | Random value (letters and digits, 32 by default, 16–256), printed once. Asks before replacing an existing value. |
-| `delete` | `d` | `delete <key> [--yes]` | Asks for confirmation unless `--yes`. With no way to answer (e.g. `docker exec` without `-it`) it fails and suggests `--yes`. |
-| `rename` | | `rename <key> <new-key>` | Keeps the value, version and read count. Logged under both keys. |
+| `delete` | `d` | `delete <key> [--yes]` | Asks for confirmation unless `--yes`. With no way to answer (e.g. `docker exec` without `-it`) it fails and suggests `--yes`. Warns which project tokens list the key (they keep it, so a restore makes it reachable again). |
+| `rename` | | `rename <key> <new-key> [--yes]` | Keeps the value, version and read count. Logged under both keys. If project tokens list the key by name, it asks to update them too (`--yes` does it without asking). |
 | `restore` | | `restore <key> [version] [--yes]` | Brings back the previous value, a specific version, or a deleted secret's last value. Saved as a new version, so nothing is lost. |
 | `list` | `l` | `list [prefix]` | Table of keys (optionally starting with `prefix`): version, reads, created, updated, and a count. Never shows values. |
 | `search` | `s` | `search <text>` | Keys containing `text` (not case-sensitive). The older `list <text> fuzzy` still works. |
-| `info` | `i` | `info <key>` | Version, app reads, when and by whom it was last read, created and updated times. For a deleted key, says when and by whom it was deleted. |
+| `info` | `i` | `info <key>` | Version, app reads, when and by whom it was last read, created and updated times, and which project tokens can read it. For a deleted key, says when and by whom it was deleted. |
 | `history` | | `history <key> [count]` | The last `count` events (default 20): when, what, version, source, detail. Works for deleted keys. |
 | `status` | | `status` | Version, environment, database, schema version, number of secrets, bootstrap state. Non-zero exit when something needs attention. |
-| `bootstrap` | `b` | `bootstrap open [duration]` / `lock` / `status` | Opens the bootstrap endpoint for 10 minutes (or the given duration), closes it, or shows its state and recent attempts ([§7](#7-bootstrap-flow)). |
+| `bootstrap` | `b` | `bootstrap open [project] [duration]` / `lock` / `status` | Opens the bootstrap endpoint for 10 minutes (or the given duration) to hand out a project's new token or the master token, closes it, or shows its state and recent attempts ([§7](#7-bootstrap-flow)). |
+| `token` | `t` | `token [list]` / `create <name> [--allow <p>]... [--write <p>]...` / `show <name>` / `allow <p> <name>... [--write]` / `deny <p> <name>...` / `rotate <name> [--yes]` / `revoke <name> [--yes]` | Per-project tokens ([§6](#project-tokens)). `create` and `rotate` print the token once, on stdout. Patterns that match no secret get a warning (usually a typo); `deny` warns if a wildcard still covers the key. |
 | `help` | `h` | `help [command]` | All commands, or one. |
 | `exit` | `quit` | `exit` | Leaves the shell (or stops the server in plain `cove`). |
 
@@ -577,11 +621,26 @@ Back up all of these. **Without the key, the DB dump is useless.**
 1. PostgreSQL: `pg_dump -n cove ...`
 2. `/srv/server/storage/cove/.env` (contains `VAULT_ENCRYPTION_KEY` and `COVE_CLIENT_SECRET`)
 
-### Rotating the client token
+### Moving a project to its own token
+
+One project at a time, whenever convenient; the others keep using the master token meanwhile.
+
+1. `token create <project> --allow '<project>.*'` (plus any shared keys, e.g. `--allow shared.tmdb-api-key`). Copy the printed token.
+2. `token show <project>` and check the list of secrets it can reach. Warnings mean a pattern matches nothing.
+3. Put the token where the project reads its Cove token (its `.env`, or its `LoadOrBootstrap` token file) and restart it. No code changes are needed.
+4. Check it works: `token list` shows a "last used" time, and `history <key>` shows the project's name as the source.
+
+If something was missed, the project gets `403 forbidden_key` naming the key; `token allow <key> <project>` fixes it without a restart.
+
+### Rotating a project token
+
+`token rotate <project>` prints a new token with the same access; the old one stops working at once. Put the new one in the project's config and restart it. For a project that fetches its token with `LoadOrBootstrap`, delete its token file and use `bootstrap open <project>` instead. If a token may have leaked, `token revoke <project>` stops it immediately, and every shared secret it could read should be changed too (`info <key>` lists who can read a key).
+
+### Rotating the master token
 
 1. Put a new `COVE_CLIENT_SECRET` (at least 24 characters) in the host `.env`.
 2. `docker compose restart cove`
-3. Update every client, either by hand or by running `bootstrap open` and letting a client fetch it again (with `LoadOrBootstrap`, delete its token file first).
+3. Update every client still using the master token, either by hand or by running `bootstrap open` and letting a client fetch it again (with `LoadOrBootstrap`, delete its token file first). Projects with their own tokens are unaffected.
 
 ### Recovering a deleted or overwritten secret
 
@@ -599,6 +658,7 @@ These remain in the current code.
 
 > See [IMPROVEMENTS.md](IMPROVEMENTS.md) for ratings (criticality, effort, improvement), proposed fixes, and a suggested order of work.
 
-1. There's one global token. Clients can't be given read-only or per-secret access, and bootstrap hands out that same token.
-2. `restore` only sees history recorded under the key's current name; values from before a `rename` are under the old name.
-3. Because the audit log is mandatory, a broken `event_log` table (e.g. a lost `INSERT` grant) makes reads and writes fail until it's fixed. The error message and the server log name the cause.
+1. The master token still has full access to everything, and anyone who has it can do anything. Once every project has its own token, keep the master token for emergencies only.
+2. Token management happens only in the CLI (which connects to the database directly), not through the API.
+3. `restore` only sees history recorded under the key's current name; values from before a `rename` are under the old name.
+4. Because the audit log is mandatory, a broken `event_log` table (e.g. a lost `INSERT` grant) makes reads and writes fail until it's fixed. The error message and the server log name the cause.

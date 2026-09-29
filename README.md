@@ -13,6 +13,7 @@ Secrets are encrypted before being written to the database. Keys are never expos
 - AES-256-GCM encryption at rest (keys derived via SHA-256)
 - PostgreSQL-backed storage with a full event log
 - Bearer token authentication on all secret endpoints
+- Per-project tokens, each limited to the secrets it needs (read-only or read/write)
 - One-time bootstrap endpoint for automated client setup
 - Interactive CLI for direct vault management
 - Docker-ready with a minimal Alpine image
@@ -166,10 +167,18 @@ All responses use a uniform JSON envelope:
 All endpoints except `/v0/health`, `/v0/ready` and `/v0/bootstrap/lighthouse` require a `Bearer` token:
 
 ```
-Authorization: Bearer <COVE_CLIENT_SECRET>
+Authorization: Bearer <token>
 ```
 
-All secret-by-ID endpoints (`/v0/secrets/{key}`) also require `X-Cove-Source`, which identifies the calling application and is written to the event log:
+The token is either the master token (`COVE_CLIENT_SECRET`), which can reach every secret, or a **project token** created with `token create` in the CLI, which can only reach the keys it was given:
+
+```
+cove> token create lighthouse --allow 'lighthouse.*' --allow shared.discord-webhook
+```
+
+A project token asking for a key outside its access gets `403 forbidden_key`, and `GET /v0/secrets` lists only its keys. See [DOCUMENTATION.md §6](DOCUMENTATION.md#project-tokens).
+
+With the master token, secret-by-ID endpoints (`/v0/secrets/{key}`) also require `X-Cove-Source`, which identifies the calling application and is written to the event log. With a project token, the token's name is recorded instead.
 
 ```
 X-Cove-Source: my-app
@@ -303,14 +312,14 @@ Response (`200 OK`):
 
 **`GET /v0/bootstrap/lighthouse`** — No authentication required.
 
-Returns the `COVE_CLIENT_SECRET` in plaintext, but only while opened with `bootstrap open` in the CLI (10 minutes by default). It closes after one handout; the same address can fetch it again within 2 minutes, in case it crashed before saving it. Otherwise it answers `403` with `bootstrap_locked`, `bootstrap_expired`, or `bootstrap_forbidden` (address not in `COVE_BOOTSTRAP_ALLOWED_CIDRS`). Every attempt is recorded; `bootstrap status` shows them.
+Returns a token in plaintext, but only while opened in the CLI (10 minutes by default): `bootstrap open <project>` hands out a new token for that project, plain `bootstrap open` the master token (`COVE_CLIENT_SECRET`). It closes after one handout; the same address can fetch it again within 2 minutes, in case it crashed before saving it. Otherwise it answers `403` with `bootstrap_locked`, `bootstrap_expired`, or `bootstrap_forbidden` (address not in `COVE_BOOTSTRAP_ALLOWED_CIDRS`). Every attempt is recorded; `bootstrap status` shows them.
 
 This is intended for automated clients that need their bearer token on first boot without any pre-shared credentials. With [CoveClient](https://github.com/LSariol/CoveClient), use `LoadOrBootstrap(path)`: it saves the token and reuses it on later starts.
 
 ```json
 {
   "success": true,
-  "data": { "secret": "<COVE_CLIENT_SECRET>" }
+  "data": { "secret": "<token>" }
 }
 ```
 
@@ -327,14 +336,15 @@ Open the prompt with `cove shell` (in Docker: `docker exec -it cove /cove shell`
 | `update` | `update <key> <value>` | Change a secret's value (new version) |
 | `generate` | `generate <key> [length] [--yes]` | Create or replace a secret with a random value |
 | `delete` | `delete <key> [--yes]` | Delete a secret (asks unless `--yes`) |
-| `rename` | `rename <key> <new-key>` | Rename a secret, keeping its value and history |
+| `rename` | `rename <key> <new-key> [--yes]` | Rename a secret, keeping its value and history (and updating tokens that list it) |
 | `restore` | `restore <key> [version] [--yes]` | Bring back an earlier value or a deleted secret |
 | `list` | `list [prefix]` | List secrets (never values) |
 | `search` | `search <text>` | List secrets whose keys contain `<text>` |
 | `info` | `info <key>` | A secret's details and last read |
 | `history` | `history <key> [count]` | A secret's recent events |
 | `status` | `status` | Health overview |
-| `bootstrap` | `bootstrap [open [duration]\|lock\|status]` | Open the bootstrap endpoint for 10 minutes, close it, or show its state |
+| `bootstrap` | `bootstrap [open [project] [duration]\|lock\|status]` | Open the bootstrap endpoint for 10 minutes, close it, or show its state |
+| `token` | `token [list\|create\|show\|allow\|deny\|rotate\|revoke] ...` | Per-project tokens: create one, see what it reaches, change its access, rotate or revoke it |
 | `help` | `help [command]` | All commands, or one |
 | `exit` | `exit` | Leave the shell |
 
@@ -353,6 +363,7 @@ go get github.com/lsariol/coveclient
 ## Security Notes
 
 - `COVE_CLIENT_SECRET` and `VAULT_ENCRYPTION_KEY` are auto-generated on first start if not provided, and written back to the `.env` file. Store these values securely — losing `VAULT_ENCRYPTION_KEY` means losing access to all stored secrets.
+- Give each project its own token (`token create`) instead of sharing `COVE_CLIENT_SECRET`: a leak then exposes only that project's secrets, and revoking it doesn't affect anyone else. Only a hash of each token is stored.
 - The bootstrap endpoint is closed unless you open it with `bootstrap open`, and closes again after one handout or 10 minutes. Set `COVE_BOOTSTRAP_ALLOWED_CIDRS` to limit it to your Docker network.
 - Cove is intended for internal/private networks. It does not implement TLS termination — place it behind a reverse proxy (e.g., Nginx, Caddy) if exposed beyond localhost.
 - All create, read, update, and delete operations are written to `cove.event_log`, which retains the encrypted old and new values for audit purposes.
