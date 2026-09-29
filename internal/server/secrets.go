@@ -2,6 +2,7 @@ package server
 
 import (
 	"encoding/json"
+	"errors"
 	"fmt"
 	"log"
 	"net/http"
@@ -11,6 +12,8 @@ import (
 )
 
 const maxBodyBytes = 1 << 16 // 64 KB
+
+const invalidBodyMessage = `request body must be JSON like {"value": "..."} and at most 64 KB`
 
 func (s *Server) handleSecretsCollection(w http.ResponseWriter, r *http.Request) {
 	if r.URL.Path != "/v0/secrets" {
@@ -45,7 +48,7 @@ func (s *Server) handleSecretID(w http.ResponseWriter, r *http.Request) {
 
 	source := r.Header.Get("X-Cove-Source")
 	if source == "" {
-		writeError(w, http.StatusBadRequest, "missing_source", "X-Cove-Source header is required")
+		writeError(w, http.StatusBadRequest, "missing_source", "X-Cove-Source header is required (the name of the calling app)")
 		return
 	}
 
@@ -66,6 +69,7 @@ func (s *Server) handleSecretID(w http.ResponseWriter, r *http.Request) {
 func (s *Server) getAllSecrets(w http.ResponseWriter, r *http.Request) {
 	secrets, err := s.vault.List(r.Context())
 	if err != nil {
+		log.Printf("list secrets: %v", err)
 		writeError(w, http.StatusInternalServerError, "get_all", "failed to retrieve secrets")
 		return
 	}
@@ -88,7 +92,14 @@ func (s *Server) getAllSecrets(w http.ResponseWriter, r *http.Request) {
 func (s *Server) getSecret(w http.ResponseWriter, r *http.Request, id string, source string) {
 	secret, err := s.vault.Get(r.Context(), id, source)
 	if err != nil {
-		writeError(w, http.StatusNotFound, "not_found", "secret not found")
+		// Every failure is 404 not_found, to keep the /v0 contract. The log
+		// records the real cause when it isn't simply a missing key.
+		message := "secret not found"
+		if !errors.Is(err, vault.ErrNotFound) {
+			log.Printf("get %q (source %q) failed: %v", id, source, err)
+			message = "secret could not be read"
+		}
+		writeError(w, http.StatusNotFound, "not_found", message)
 		return
 	}
 
@@ -106,12 +117,18 @@ func (s *Server) postSecret(w http.ResponseWriter, r *http.Request, key string, 
 		Value string `json:"value"`
 	}
 	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
-		writeError(w, http.StatusBadRequest, "invalid_body", "request body is invalid or too large")
+		writeError(w, http.StatusBadRequest, "invalid_body", invalidBodyMessage)
 		return
 	}
 
 	if err := s.vault.Create(r.Context(), key, body.Value, source); err != nil {
-		writeError(w, http.StatusInternalServerError, "create_error", "failed to create secret")
+		message := "failed to create secret"
+		if errors.Is(err, vault.ErrAlreadyExists) {
+			message = "a secret with this key already exists; use PATCH to change its value"
+		} else {
+			log.Printf("create %q (source %q) failed: %v", key, source, err)
+		}
+		writeError(w, http.StatusInternalServerError, "create_error", message)
 		return
 	}
 
@@ -121,7 +138,7 @@ func (s *Server) postSecret(w http.ResponseWriter, r *http.Request, key string, 
 		Message: fmt.Sprintf("%s has been created.", key),
 	})
 
-	log.Printf("%s has been created.\n", key)
+	log.Printf("created %q (source %q)", key, source)
 }
 
 func (s *Server) patchSecret(w http.ResponseWriter, r *http.Request, key string, source string) {
@@ -131,12 +148,18 @@ func (s *Server) patchSecret(w http.ResponseWriter, r *http.Request, key string,
 		Value string `json:"value"`
 	}
 	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
-		writeError(w, http.StatusBadRequest, "invalid_body", "request body is invalid or too large")
+		writeError(w, http.StatusBadRequest, "invalid_body", invalidBodyMessage)
 		return
 	}
 
 	if _, err := s.vault.Update(r.Context(), key, body.Value, source); err != nil {
-		writeError(w, http.StatusInternalServerError, "update_error", "failed to update secret")
+		message := "failed to update secret"
+		if errors.Is(err, vault.ErrNotFound) {
+			message = "no secret with this key exists; use POST to create it"
+		} else {
+			log.Printf("update %q (source %q) failed: %v", key, source, err)
+		}
+		writeError(w, http.StatusInternalServerError, "update_error", message)
 		return
 	}
 
@@ -146,12 +169,17 @@ func (s *Server) patchSecret(w http.ResponseWriter, r *http.Request, key string,
 		Message: fmt.Sprintf("%s has been updated.", key),
 	})
 
-	log.Printf("%s has been updated.\n", key)
+	log.Printf("updated %q (source %q)", key, source)
 }
 
 func (s *Server) deleteSecret(w http.ResponseWriter, r *http.Request, key string, source string) {
 	if err := s.vault.Delete(r.Context(), key, source); err != nil {
-		writeError(w, http.StatusNotFound, "not_found", "secret not found")
+		message := "secret not found"
+		if !errors.Is(err, vault.ErrNotFound) {
+			log.Printf("delete %q (source %q) failed: %v", key, source, err)
+			message = "secret could not be deleted"
+		}
+		writeError(w, http.StatusNotFound, "not_found", message)
 		return
 	}
 
@@ -161,5 +189,5 @@ func (s *Server) deleteSecret(w http.ResponseWriter, r *http.Request, key string
 		Message: fmt.Sprintf("%s has been deleted.", key),
 	})
 
-	log.Printf("%s has been deleted.\n", key)
+	log.Printf("deleted %q (source %q)", key, source)
 }

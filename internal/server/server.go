@@ -3,7 +3,6 @@ package server
 
 import (
 	"context"
-	"fmt"
 	"log"
 	"net/http"
 	"time"
@@ -48,9 +47,11 @@ func New(v *vault.Vault, marker *bootstrap.Marker, db Pinger, opts Options) *Ser
 func (s *Server) Start() {
 	srv := s.httpServer()
 
-	fmt.Printf("Running on %s\n", srv.Addr)
+	log.Printf("API listening on %s", srv.Addr)
 
-	log.Fatal(srv.ListenAndServe())
+	if err := srv.ListenAndServe(); err != nil {
+		log.Fatalf("API server stopped: %v", err)
+	}
 }
 
 // httpServer builds the http.Server with timeouts, so a slow or stalled client
