@@ -184,6 +184,13 @@ Instead of handing out the master token, bootstrap would hand out a token that b
 
 ## 5. Focus: the CLI
 
+> **Decided 2026-09-28 (supersedes the proposals below where they differ):**
+> - **Commands:** `get` (logged, no longer counts toward `read_count`), `create`, `update`, `delete [--yes]`, `list [prefix]`, `search <text>` (old `list x fuzzy` still works), `generate <key> [length]`, `rename <old> <new>`, `info <key>`, `history <key> [n]`, `restore <key> [version]`, `status`, `help [command]`, `bootstrap` (open/status come in Phase 3), `exit`.
+> - **Principle:** everything a self-hoster needs is reachable from the CLI; nobody should need to open the database. Keep the command set lean.
+> - **Output:** follow clig.dev / `gh` conventions: symbols + meaningful color only, no output prefix, color off when not a terminal or `NO_COLOR` is set, data to stdout and messages to stderr, exit codes, consistent messages.
+> - **Libraries:** no cobra/urfave. Use `golang.org/x/term` for the interactive shell (history, arrow keys, tab completion of commands and keys), falling back to plain line reading when stdin isn't a terminal.
+> - **Hidden value input:** not now.
+
 ### Background: attach vs. exec
 
 There are two ways to "get into" a running container:
