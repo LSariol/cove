@@ -3,6 +3,7 @@ package server
 
 import (
 	"context"
+	"fmt"
 	"log"
 	"net/http"
 	"time"
@@ -44,15 +45,34 @@ func New(v *vault.Vault, marker *bootstrap.Marker, db Pinger, opts Options) *Ser
 	}
 }
 
-func (s *Server) Start() {
+// Run serves the API until ctx is cancelled, then shuts down gracefully:
+// requests in progress get up to shutdownTimeout to finish. It returns an
+// error if the server can't start, e.g. because the port is in use.
+func (s *Server) Run(ctx context.Context) error {
 	srv := s.httpServer()
 
-	log.Printf("API listening on %s", srv.Addr)
+	errs := make(chan error, 1)
+	go func() {
+		log.Printf("API listening on %s", srv.Addr)
+		errs <- srv.ListenAndServe()
+	}()
 
-	if err := srv.ListenAndServe(); err != nil {
-		log.Fatalf("API server stopped: %v", err)
+	select {
+	case err := <-errs:
+		return fmt.Errorf("API server stopped: %w", err)
+	case <-ctx.Done():
 	}
+
+	shutdownCtx, cancel := context.WithTimeout(context.Background(), shutdownTimeout)
+	defer cancel()
+	if err := srv.Shutdown(shutdownCtx); err != nil {
+		return fmt.Errorf("shut down the API server: %w", err)
+	}
+	return nil
 }
+
+// shutdownTimeout is how long requests in progress get to finish when Cove stops.
+const shutdownTimeout = 5 * time.Second
 
 // httpServer builds the http.Server with timeouts, so a slow or stalled client
 // can't hold a connection open forever. Real requests take milliseconds.

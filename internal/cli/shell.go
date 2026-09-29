@@ -25,6 +25,9 @@ type CLI struct {
 
 	commands []command
 	byName   map[string]*command
+
+	// stop asks Cove to shut down; `exit` calls it. It's set by Run.
+	stop func()
 }
 
 func New(v *vault.Vault, marker *bootstrap.Marker) *CLI {
@@ -45,12 +48,15 @@ func New(v *vault.Vault, marker *bootstrap.Marker) *CLI {
 	return c
 }
 
-// StartCLI reads and runs commands until stdin closes.
-func (c *CLI) StartCLI(ctx context.Context) {
-	for {
+// Run reads and runs commands until stdin closes, `exit` is typed, or ctx is
+// cancelled. `exit` calls stop, which asks the rest of Cove to shut down too.
+func (c *CLI) Run(ctx context.Context, stop func()) {
+	c.stop = stop
+
+	for ctx.Err() == nil {
 		fmt.Print("Cove CLI> ")
 		if !c.scanner.Scan() {
-			break
+			return
 		}
 		c.run(ctx, strings.Fields(c.scanner.Text()))
 	}

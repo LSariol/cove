@@ -3,7 +3,6 @@ package cli
 import (
 	"context"
 	"fmt"
-	"os"
 	"strings"
 )
 
@@ -102,5 +101,7 @@ func (c *CLI) help(ctx context.Context, args []string) {
 
 func (c *CLI) exit(ctx context.Context, args []string) {
 	fmt.Println("Shutting down Cove...")
-	os.Exit(0)
+	if c.stop != nil {
+		c.stop()
+	}
 }

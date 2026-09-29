@@ -83,14 +83,19 @@ func main() {
 		Port:         cfg.Port,
 		Version:      buildVersion(),
 	})
-	cli := cli.New(v, marker)
+	shell := cli.New(v, marker)
 
-	go srv.Start()
+	// The CLI runs alongside the server. When stdin closes (no terminal
+	// attached) it simply returns and the API keeps serving; `exit`, Ctrl+C
+	// and `docker stop` all cancel ctx, which stops the server gracefully.
+	go shell.Run(ctx, stop)
 
-	cli.StartCLI(ctx)
-
-	<-ctx.Done()
-	log.Println("Shutting down.")
+	err = srv.Run(ctx)
+	db.Close()
+	if err != nil {
+		fatal(err)
+	}
+	log.Println("Cove stopped.")
 }
 
 // buildVersion returns version, or for an unstamped local build, "dev" plus the
