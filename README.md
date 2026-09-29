@@ -114,7 +114,7 @@ Then set `COVE_MIGRATE_DATABASE_URL` (as `cove_migrator`) and start Cove. It cre
 | `VAULT_ENCRYPTION_KEY` | No     | Key used to derive the AES-256 encryption key. Auto-generated and persisted if empty. |
 | `APP_ENV`            | No       | Runtime environment label (`DEV` or `PROD`) |
 | `APP_PORT`           | Yes      | Port the HTTP server listens on |
-| `APP_ENV_PATH`       | Yes      | Absolute or relative path to the `.env` file (used for auto-generated secret persistence) |
+| `APP_ENV_PATH`       | No       | The `.env` file to load first, and where auto-generated secrets are saved. Defaults to the `.env` file that was loaded. |
 | `APP_MARKER_PATH`    | No       | Directory for bootstrap marker files. Defaults to `/app/vault/markers`. |
 
 > **Important:** If you rotate `VAULT_ENCRYPTION_KEY`, existing secrets in the database cannot be decrypted. Back up your key and treat it like a master password.
@@ -139,10 +139,10 @@ The included `docker-compose.yml` mounts external volumes for the `.env` file an
 
 3. Start the service:
    ```bash
-   docker compose up -d
+   COVE_VERSION=$(git describe --tags --always) docker compose up -d
    ```
 
-   The container exposes port `2100` and restarts automatically unless stopped. A health check polls `/v0/health` every 10 seconds.
+   The container exposes port `2100` and restarts automatically unless stopped. A health check polls `/v0/ready` (which checks the database) every 10 seconds.
 
 4. To access the interactive CLI inside the running container:
    ```bash
@@ -163,7 +163,7 @@ All responses use a uniform JSON envelope:
 { "success": false, "error": { "type": "error_code", "message": "human readable message" } }
 ```
 
-All endpoints except `/v0/health` and `/v0/bootstrap/lighthouse` require a `Bearer` token:
+All endpoints except `/v0/health`, `/v0/ready` and `/v0/bootstrap/lighthouse` require a `Bearer` token:
 
 ```
 Authorization: Bearer <COVE_CLIENT_SECRET>

@@ -92,8 +92,8 @@ Dependencies point one way: `main` → `server` / `cli` → `vault` → `databas
 
 ### Startup sequence (`cmd/cove/main.go`)
 
-1. `config.Load()` loads `.env` from the working directory. If that file doesn't exist, it tries `/app/vault/.env`. If neither exists, it panics.
-2. `config.FromEnv()` reads every setting into a `Config`, and `config.Ensure()` checks for `COVE_CLIENT_SECRET` and `VAULT_ENCRYPTION_KEY`. If either is empty, it generates a value and writes it back to the file at `APP_ENV_PATH` (see [§12](#12-known-issues-and-gotchas): the value is written to the file but not loaded into the running process).
+1. `config.Load()` loads the `.env` file and returns a `Config`. It uses `APP_ENV_PATH` if that's set in the environment (as in docker-compose), otherwise the first of `./.env` and `/app/vault/.env` that exists. A file that exists but can't be parsed stops startup with the parse error.
+2. `config.Ensure()` generates any missing `COVE_CLIENT_SECRET` / `VAULT_ENCRYPTION_KEY`, saves them to `APP_ENV_PATH`, and uses them straight away. Then `cfg.Validate()` stops startup if `COVE_DATABASE_URL` or `APP_PORT` is missing, or the client secret is shorter than 24 characters (a short vault key only logs a warning), and Cove logs its version. Startup errors print one line, `cove: <message>`, and exit with status 1.
 3. A context is created that is cancelled on `SIGINT` / `SIGTERM`.
 4. If `COVE_MIGRATE_DATABASE_URL` is set, pending database migrations are applied (see [§4](#4-database)). A failed migration stops startup.
 5. `database.New(cfg.DatabaseURL)` and `Connect()` opens a `pgxpool` and pings it with a 3-second timeout. If this fails, the process exits.
@@ -124,20 +124,18 @@ All configuration comes from environment variables. `config.Load()` reads them f
 
 | Variable | Required | Used by | Description |
 |---|---|---|---|
-| `COVE_DATABASE_URL` | **Yes** | `database.New` | Connection string for the runtime role, e.g. `postgres://cove_app:pass@sparkdb:5432/cove_db`. Not in `.env.example`; you must add it. |
+| `COVE_DATABASE_URL` | **Yes** | `database.New` | Connection string for the runtime role, e.g. `postgres://cove_app:pass@sparkdb:5432/cove_db`. |
 | `COVE_MIGRATE_DATABASE_URL` | No | `database.Migrate` | Connection string for the migrator role, e.g. `postgres://cove_migrator:pass@sparkdb:5432/cove_db`. When set, Cove applies pending migrations on startup and `cove migrate` works. When unset, the database must already be migrated. |
-| `COVE_CLIENT_SECRET` | Yes* | `server` (middleware, bootstrap) | Bearer token that clients must send. *Generated (32 chars) if empty. |
-| `VAULT_ENCRYPTION_KEY` | Yes* | `encryption` | Master key material. SHA-256 of this value is the AES key. *Generated (45 chars) if empty. |
+| `COVE_CLIENT_SECRET` | Yes* | `server` (middleware, bootstrap) | Bearer token that clients must send. Must be at least 24 characters. *Generated (32 chars) if empty. |
+| `VAULT_ENCRYPTION_KEY` | Yes* | `encryption` | Master key material. SHA-256 of this value is the AES key. Shorter than 24 characters logs a warning. *Generated (45 chars) if empty. |
 | `APP_PORT` | **Yes** | `server.Start` | Listen port. The server binds `0.0.0.0:$APP_PORT`. |
-| `APP_ENV_PATH` | Yes* | `config.Ensure` | File that generated secrets are written to. *Only needed when a secret has to be generated. |
-| `APP_MARKER_PATH` | No | `bootstrap.Marker` | Directory for the `bootstrap_completed` marker. Default: `/app/vault/markers`. |
-| `APP_ENV` | No | — | `DEV` / `PROD` label. Not read by the code. |
-| `APP_VAULT_PATH` | No | — | Left over from the old `vault.json` storage. Not read by the code. |
-| `APP_MARKER_DIR` | No | — | Set in `docker-compose.yml`, but **the code reads `APP_MARKER_PATH`**. In Docker it works anyway because the default path is the same. |
+| `APP_ENV_PATH` | No | `config` | The `.env` file to load first, and where generated secrets are saved. Default: the `.env` file that was loaded. |
+| `APP_MARKER_PATH` | No | `bootstrap.Marker` | Directory for the `bootstrap_completed` marker. Default: `/app/vault/markers`. The older name `APP_MARKER_DIR` also works. |
+| `APP_ENV` | No | — | `DEV` / `PROD` label. Not read by the code yet. |
 
 Generated secrets use `encryption.GenerateSecret(n)`: `n` characters from `[a-zA-Z0-9]`, picked with `crypto/rand`.
 
-> **Warning:** `config.Store` rewrites the whole `.env` file with `godotenv.Write`. Comments and formatting are lost, and values are re-quoted.
+> **Note:** when `config.Store` saves a generated secret, it rewrites the whole `.env` file: comments and formatting are lost, values are re-quoted, and the file is set to `600` (owner only). A `.env` it can't parse is left untouched.
 
 ### Dev vs. prod values
 
@@ -278,7 +276,9 @@ There is only one token. Every client gets the same access: full read/write to e
 
 | Method | Path | Auth | `X-Cove-Source` | Purpose |
 |---|---|---|---|---|
-| any | `/v0/health` | no | no | Liveness check |
+| any | `/v0/health` | no | no | Liveness: the HTTP server is up |
+| any | `/v0/ready` | no | no | Readiness: the database is reachable |
+| any | `/v0/version` | yes | no | The running Cove version |
 | GET | `/v0/bootstrap/lighthouse` | no | no | One-time token handout ([§7](#7-bootstrap-flow)) |
 | any | `/v0/auth` | yes | no | Checks that the token is valid |
 | GET | `/v0/secrets` | yes | no | List metadata for all secrets |
@@ -306,7 +306,18 @@ Request bodies (POST/PATCH) can be at most **64 KB** (`maxBodyBytes`). Anything 
 ```json
 { "success": true, "data": { "healthy": true, "time": "2026-05-15T12:00:00Z" } }
 ```
-This only shows that the HTTP server is up. It doesn't check the database.
+This only shows that the HTTP server is up. It doesn't check the database; use `/v0/ready` for that.
+
+**`GET /v0/ready`**: pings the database (2-second limit).
+```json
+{ "success": true, "data": { "ready": true, "time": "2026-05-15T12:00:00Z" } }
+```
+Returns `503 not_ready` when the database is unreachable. The Docker healthcheck uses this.
+
+**`GET /v0/version`**: requires auth.
+```json
+{ "success": true, "data": { "version": "v1.0.0" } }
+```
 
 **`GET /v0/auth`**
 ```json
@@ -325,7 +336,7 @@ This only shows that the HTTP server is up. It doesn't check the database.
   }
 }
 ```
-If the vault is empty, `secrets` is `null`, not `[]`. A DB error returns `500 get_all`.
+If the vault is empty, `secrets` is `[]`. A DB error returns `500 get_all`.
 
 **`GET /v0/secrets/{key}`**: adds 1 to `times_pulled` (`read_count` in the database) and logs a `read` event.
 ```json
@@ -352,7 +363,8 @@ Every failure, including a key that already exists, returns `500 create_error`.
 | `not_found` | 404 | unknown `/v0/secrets*` path, GET/DELETE failure |
 | `method_not_allowed` | 405 | wrong method |
 | `bootstrap_locked` | 403 | bootstrap already used |
-| `get_all`, `create_error`, `update_error`, `server_error` | 500 | DB / config failures |
+| `get_all`, `create_error`, `update_error`, `server_error`, `marker_error` | 500 | DB / config / bootstrap marker failures |
+| `not_ready` | 503 | `/v0/ready` when the database is unreachable |
 
 ### curl examples
 
@@ -381,7 +393,7 @@ The bootstrap endpoint lets a new client (named "Lighthouse" in the code) get `C
 `GET /v0/bootstrap/lighthouse`:
 
 1. Tries to create the marker with `O_CREATE|O_EXCL`, so only one caller can succeed.
-2. If the marker already exists (or can't be created), returns `403 bootstrap_locked`.
+2. If the marker already exists, returns `403 bootstrap_locked`. If it can't be created (permissions, full disk), returns `500 marker_error` and logs why.
 3. If `COVE_CLIENT_SECRET` is empty, deletes the marker again and returns `500 server_error`.
 4. Otherwise returns `{ "secret": "<COVE_CLIENT_SECRET>" }` and prints `Bootstrap complete`.
 
@@ -431,7 +443,8 @@ cp .env.example .env
 Edit `.env`:
 
 ```env
-COVE_DATABASE_URL=postgres://user:pass@localhost:5432/yourdb
+COVE_DATABASE_URL=postgres://cove_app:pass@localhost:5432/cove_db
+COVE_MIGRATE_DATABASE_URL=postgres://cove_migrator:pass@localhost:5432/cove_db
 COVE_CLIENT_SECRET=           # empty = generate
 VAULT_ENCRYPTION_KEY=         # empty = generate
 APP_ENV=DEV
@@ -440,15 +453,11 @@ APP_ENV_PATH=.env
 APP_MARKER_PATH=./markers
 ```
 
-> **Important:** `.env.example` uses the literal text `Kept Empty` as the value of both secrets. That's a non-empty string, so Cove will use it as-is and won't generate anything. Delete it or replace it with real values.
-
 ```bash
 go run ./cmd/cove
 # or
 go build -o cove ./cmd/cove && ./cove
 ```
-
-**On first run with empty secrets, restart once** after the values have been generated (see [§12](#12-known-issues-and-gotchas)).
 
 VS Code: `.vscode/launch.json` has a debug configuration for `cmd/cove`.
 
@@ -458,7 +467,7 @@ VS Code: `.vscode/launch.json` has a debug configuration for `cmd/cove`.
 
 ### Image (`Dockerfile`)
 
-Two-stage build: `golang:1.25.1-alpine` builds the binary, then it's copied to `/cove` in `alpine:latest`. The working directory is `/app`. The image exposes `2100`.
+Two-stage build: `golang:1.25.1-alpine` builds the binary, then it's copied to `/cove` in `alpine:latest`. The working directory is `/app`. The image exposes `2100`. The `VERSION` build argument is stamped into the binary (compose passes `COVE_VERSION`, default `dev`).
 
 ### Compose (`docker-compose.yml`)
 
@@ -468,25 +477,23 @@ Two-stage build: `golang:1.25.1-alpine` builds the binary, then it's copied to `
 | Network | `spark` (external, must already exist) |
 | `.env` | `/srv/server/storage/cove/.env` → `/app/vault/.env` (**read-only**) |
 | Markers | `/srv/server/storage/cove/markers` → `/app/vault/markers` |
-| `vault.json` | `/srv/server/storage/cove/vault.json` → `/app/vault/vault.json`. Legacy and unused, but **the host file must exist** or Docker will create a directory in its place. |
 | `stdin_open` + `tty` | Keeps the CLI usable with `docker attach` |
 | Restart | `unless-stopped` |
-| Healthcheck | `wget -qO- http://localhost:2100/v0/health` every 10s |
+| Healthcheck | `wget -qO- http://localhost:2100/v0/ready` every 10s (unhealthy when the database is unreachable) |
 
-Because `.env` is mounted read-only, **the host `.env` must already contain `COVE_CLIENT_SECRET` and `VAULT_ENCRYPTION_KEY`**. If either is empty, `config.Ensure` can't write the file and the container panics on start. Generate the values first (for example by running Cove locally once, or with `openssl rand -base64 36 | tr -dc 'A-Za-z0-9'`).
+Because `.env` is mounted read-only, **the host `.env` must already contain `COVE_CLIENT_SECRET` and `VAULT_ENCRYPTION_KEY`**. If either is empty, Cove can't save a generated value, and stops with a message naming the setting and the file. Generate the values first (for example by running Cove locally once, or with `openssl rand -base64 36 | tr -dc 'A-Za-z0-9'`).
 
 ### First deploy
 
 ```bash
 # on the server
 mkdir -p /srv/server/storage/cove/markers
-touch /srv/server/storage/cove/vault.json
 cp .env.example /srv/server/storage/cove/.env
 # edit it: COVE_DATABASE_URL, COVE_CLIENT_SECRET, VAULT_ENCRYPTION_KEY
 chmod 600 /srv/server/storage/cove/.env
 
 docker network create spark        # if it doesn't exist
-docker compose up -d --build
+COVE_VERSION=$(git describe --tags --always) docker compose up -d --build
 docker compose logs -f cove
 ```
 
@@ -496,7 +503,7 @@ The Postgres host in `COVE_DATABASE_URL` must be reachable from inside the conta
 
 ```bash
 git pull
-docker compose up -d --build
+COVE_VERSION=$(git describe --tags --always) docker compose up -d --build
 ```
 
 State lives in Postgres and the bind mounts, so rebuilding the container is safe.
@@ -520,7 +527,7 @@ Back up all of these. **Without the key, the DB dump is useless.**
 
 ### Rotating the client token
 
-1. Put a new `COVE_CLIENT_SECRET` in the host `.env`.
+1. Put a new `COVE_CLIENT_SECRET` (at least 24 characters) in the host `.env`.
 2. `docker compose restart cove`
 3. Update every client, either by hand or by running `bootstrap clear` and letting a client call `Bootstrap()` again.
 
@@ -536,42 +543,23 @@ Cove speaks plain HTTP and has no rate limiting. Keep it on the internal Docker 
 
 ## 12. Known issues and gotchas
 
-These are found in the v0.2.0 code and haven't been fixed. They're grouped by how much they matter.
+These remain in the current code. They're grouped by how much they matter.
 
 > See [IMPROVEMENTS.md](IMPROVEMENTS.md) for ratings (criticality, effort, improvement), proposed fixes, and a suggested order of work.
 
-### Can cause data loss or failed starts
-
-1. **Generated secrets aren't used until restart.** `config.Ensure` writes new values to the `.env` file but never calls `os.Setenv`. For the rest of that first run, `VAULT_ENCRYPTION_KEY` and `COVE_CLIENT_SECRET` are empty. As a result:
-   - Secrets created in that session are encrypted with SHA-256 of the empty string. **After a restart they can't be decrypted.**
-   - Every authenticated API call returns `401`, and bootstrap returns `500`.
-   - **Workaround:** after the first start with empty secrets, stop Cove and start it again before storing anything.
-2. **Read-only `.env` in Docker.** If either secret is missing from the host `.env`, `Ensure` fails to write and `main` panics. Pre-fill both values (see [§10](#10-deploying-with-docker)).
-3. **`.env.example` placeholders.** `Kept Empty` is a real value, so no secrets get generated, and the vault key becomes the literal string `Kept Empty`.
-
-### Configuration mismatches
-
-4. `docker-compose.yml` sets `APP_MARKER_DIR`, but the code reads `APP_MARKER_PATH`. It works only because the default (`/app/vault/markers`) matches.
-5. `APP_VAULT_PATH`, the `vault.json` mount, and `APP_ENV` are unused leftovers.
-6. `.env.example` still uses the `Kept Empty` placeholders (see item 3).
-7. `config.Load` ignores `APP_ENV_PATH`. It always tries `./.env` and then `/app/vault/.env`, while `Ensure` writes to `APP_ENV_PATH`. If these point to different files, generated secrets go to a file that never gets loaded.
-8. The Dockerfile runs `mkdir -p /app/cove`, which isn't used anywhere.
-
 ### API behavior
 
-9. Status codes are coarse: a duplicate create returns `500` (not `409`), updating a missing key returns `500` (not `404`), and a decrypt failure on GET returns `404`.
-10. `GET /v0/secrets` returns `"secrets": null` when the vault is empty.
-11. `/v0/health` and `/v0/auth` accept any HTTP method, and health doesn't check the database.
-12. The bootstrap endpoint starts **open** on a fresh install (no marker file).
-13. `read_count` goes up even when decryption then fails.
-14. There's one global token. Clients can't be given read-only or per-secret access.
+1. Status codes are coarse: a duplicate create returns `500` (not `409`), updating a missing key returns `500` (not `404`), and a decrypt failure on GET returns `404`.
+2. `/v0/health`, `/v0/ready`, `/v0/auth` and `/v0/version` accept any HTTP method.
+3. The bootstrap endpoint starts **open** on a fresh install (no marker file).
+4. `read_count` goes up even when decryption then fails.
+5. There's one global token. Clients can't be given read-only or per-secret access.
 
 ### Process and runtime
 
-15. **Shutdown with a TTY attached:** on `SIGTERM` the context is cancelled, but `StartCLI` stays blocked reading stdin, so the process doesn't exit. Docker kills it after its stop timeout (10s by default).
-16. `exit` / `quit` call `os.Exit(0)`, so the DB pool isn't closed and the HTTP server isn't shut down gracefully.
-17. The HTTP server uses `http.ListenAndServe` with no read/write timeouts. `log.Fatal` ends the whole process if the listener fails (for example, if the port is in use).
-18. `database.Connect` calls `os.Exit(1)` if `pgxpool.New` fails (for example, a malformed URL) instead of returning an error.
-19. `encryption.Decrypt` ignores base64 decode errors and slices the nonce without checking the length. A stored value shorter than 12 bytes causes a panic. `net/http` recovers from it for API calls, but it crashes the process from the CLI.
-20. `LogEvent` errors are thrown away, so a broken `event_log` table fails silently.
-21. `config.Store` rewrites the whole `.env` file and drops comments.
+6. **Shutdown with a TTY attached:** on `SIGTERM` the context is cancelled, but `StartCLI` stays blocked reading stdin, so the process doesn't exit. Docker kills it after its stop timeout (10s by default).
+7. `exit` / `quit` call `os.Exit(0)`, so the DB pool isn't closed and the HTTP server isn't shut down gracefully.
+8. `log.Fatal` ends the whole process if the HTTP listener fails (for example, if the port is in use).
+9. `database.Connect` calls `os.Exit(1)` if `pgxpool.New` fails (for example, a malformed URL) instead of returning an error.
+10. `LogEvent` errors are thrown away, so a broken `event_log` table fails silently.
+11. The Dockerfile runs `mkdir -p /app/cove`, which isn't used anywhere.
