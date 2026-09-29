@@ -91,6 +91,12 @@ func fromEnv(envFile string) Config {
 // Validate returns an error for settings Cove must not run with. Call it after
 // Ensure, which fills in missing secrets.
 func (c Config) Validate() error {
+	if c.DatabaseURL == "" {
+		return errors.New("COVE_DATABASE_URL is not set")
+	}
+	if c.Port == "" {
+		return errors.New("APP_PORT is not set")
+	}
 	if len(c.ClientSecret) < minSecretLength {
 		return fmt.Errorf("COVE_CLIENT_SECRET is too short (%d characters, need at least %d). "+
 			"Leave it empty to have Cove generate one, then update your clients", len(c.ClientSecret), minSecretLength)

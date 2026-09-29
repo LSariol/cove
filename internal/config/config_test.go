@@ -166,19 +166,47 @@ func TestEnsureExplainsReadOnlyEnvFile(t *testing.T) {
 	}
 }
 
+// validConfig returns a Config that passes Validate with no warnings.
+func validConfig() Config {
+	return Config{
+		DatabaseURL:   "postgres://cove_app:pass@localhost:5432/cove_db",
+		Port:          "2100",
+		ClientSecret:  strings.Repeat("x", 32),
+		EncryptionKey: strings.Repeat("k", 45),
+	}
+}
+
+func TestValidateRequiresDatabaseURLAndPort(t *testing.T) {
+	if err := validConfig().Validate(); err != nil {
+		t.Fatalf("valid config rejected: %v", err)
+	}
+
+	noDB := validConfig()
+	noDB.DatabaseURL = ""
+	if err := noDB.Validate(); err == nil || !strings.Contains(err.Error(), "COVE_DATABASE_URL") {
+		t.Errorf("missing COVE_DATABASE_URL: %v", err)
+	}
+
+	noPort := validConfig()
+	noPort.Port = ""
+	if err := noPort.Validate(); err == nil || !strings.Contains(err.Error(), "APP_PORT") {
+		t.Errorf("missing APP_PORT: %v", err)
+	}
+}
+
 func TestValidateRejectsShortClientSecret(t *testing.T) {
 	for _, secret := range []string{"Kept Empty", "short", strings.Repeat("x", minSecretLength-1)} {
-		if err := (Config{ClientSecret: secret}).Validate(); err == nil {
+		cfg := validConfig()
+		cfg.ClientSecret = secret
+		if err := cfg.Validate(); err == nil {
 			t.Errorf("Validate accepted client secret %q", secret)
 		}
-	}
-	if err := (Config{ClientSecret: strings.Repeat("x", 32)}).Validate(); err != nil {
-		t.Errorf("Validate rejected a 32-character client secret: %v", err)
 	}
 }
 
 func TestShortEncryptionKeyIsOnlyAWarning(t *testing.T) {
-	cfg := Config{ClientSecret: strings.Repeat("x", 32), EncryptionKey: "Kept Empty"}
+	cfg := validConfig()
+	cfg.EncryptionKey = "Kept Empty"
 	if err := cfg.Validate(); err != nil {
 		t.Fatalf("a short encryption key must not stop Cove: %v", err)
 	}
