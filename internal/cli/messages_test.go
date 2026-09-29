@@ -21,14 +21,14 @@ func TestSecretErrorExplainsKnownCases(t *testing.T) {
 	}
 
 	for _, tc := range cases {
-		if got := secretError("get", "app.key", tc.err); !strings.Contains(got, tc.want) {
+		if got := secretError("get", "app.key", tc.err).Error(); !strings.Contains(got, tc.want) {
 			t.Errorf("secretError(%v) = %q, want it to contain %q", tc.err, got, tc.want)
 		}
 	}
 }
 
 func TestHelpUsesKeyAndValue(t *testing.T) {
-	c := New(nil, nil)
+	c := New(nil, nil, Options{})
 	for _, cmd := range c.commands {
 		for _, u := range cmd.usages {
 			for _, form := range u.forms {

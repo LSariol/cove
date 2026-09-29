@@ -7,11 +7,12 @@ import (
 )
 
 // command is one CLI command. run receives the full argument list, including
-// the command name in args[0].
+// the command name in args[0]. It prints its own results and returns an error
+// for anything that went wrong; the caller shows the error.
 type command struct {
 	names  []string // first is the primary name, the rest are aliases
 	usages []usage
-	run    func(c *CLI, ctx context.Context, args []string)
+	run    func(c *CLI, ctx context.Context, args []string) error
 }
 
 // usage is one way to call a command, shown by `help`.
@@ -20,13 +21,31 @@ type usage struct {
 	help  string
 }
 
+// usageError is returned when a command is called with the wrong arguments.
+type usageError struct {
+	reason string // optional, e.g. `Unknown list option "x".`
+	form   string
+}
+
+func (e usageError) Error() string {
+	if e.reason == "" {
+		return "Usage: " + e.form
+	}
+	return e.reason + " Usage: " + e.form
+}
+
 // commandTable lists every command in the order `help` shows them. Adding a
 // command here makes it available at the prompt and in the help text.
-func commandTable() []command {
+func commandTable(embedded bool) []command {
+	exitHelp := "Leaves the shell."
+	if embedded {
+		exitHelp = "Stops Cove, including the API server."
+	}
+
 	return []command{
 		{
 			names:  []string{"exit", "quit"},
-			usages: []usage{{help: "Stops Cove, including the API server."}},
+			usages: []usage{{help: exitHelp}},
 			run:    (*CLI).exit,
 		},
 		{
@@ -75,7 +94,7 @@ func commandTable() []command {
 	}
 }
 
-func (c *CLI) help(ctx context.Context, args []string) {
+func (c *CLI) help(ctx context.Context, args []string) error {
 	var b strings.Builder
 	b.WriteString("Available Commands:\n")
 
@@ -97,11 +116,15 @@ func (c *CLI) help(ctx context.Context, args []string) {
 	}
 
 	infoLog("\n" + strings.TrimRight(b.String(), "\n"))
+	return nil
 }
 
-func (c *CLI) exit(ctx context.Context, args []string) {
-	fmt.Println("Shutting down Cove...")
+func (c *CLI) exit(ctx context.Context, args []string) error {
+	if c.embedded {
+		fmt.Println("Shutting down Cove...")
+	}
 	if c.stop != nil {
 		c.stop()
 	}
+	return nil
 }

@@ -10,42 +10,39 @@ import (
 	"github.com/LSariol/Cove/internal/vault"
 )
 
-func (c *CLI) get(ctx context.Context, args []string) {
+func (c *CLI) get(ctx context.Context, args []string) error {
 	if len(args) != 2 {
-		usageLog("get <key>")
-		return
+		return usageError{form: "get <key>"}
 	}
 	key := args[1]
 
 	secret, err := c.vault.Get(ctx, key, source)
 	if err != nil {
-		errorLog(secretError("get", key, err))
-		return
+		return secretError("get", key, err)
 	}
 
 	successLog(fmt.Sprintf("%s: %s\n", secret.Key, secret.Value))
+	return nil
 }
 
-func (c *CLI) create(ctx context.Context, args []string) {
+func (c *CLI) create(ctx context.Context, args []string) error {
 	if len(args) != 3 {
-		usageLog("create <key> <value>")
-		return
+		return usageError{form: "create <key> <value>"}
 	}
 	key := args[1]
 	value := args[2]
 
 	if err := c.vault.Create(ctx, key, value, source); err != nil {
-		errorLog(secretError("create", key, err))
-		return
+		return secretError("create", key, err)
 	}
 
 	successLog(fmt.Sprintf("Created %q.\n", key))
+	return nil
 }
 
-func (c *CLI) delete(ctx context.Context, args []string) {
+func (c *CLI) delete(ctx context.Context, args []string) error {
 	if len(args) != 2 {
-		usageLog("delete <key>")
-		return
+		return usageError{form: "delete <key>"}
 	}
 	key := args[1]
 
@@ -54,87 +51,84 @@ func (c *CLI) delete(ctx context.Context, args []string) {
 
 	if !c.scanner.Scan() {
 		infoLog("Delete cancelled.")
-		return
+		return nil
 	}
 
 	response := strings.ToLower(strings.TrimSpace(c.scanner.Text()))
 
 	if response != "y" && response != "yes" {
 		infoLog("Delete cancelled.")
-		return
+		return nil
 	}
 
 	if err := c.vault.Delete(ctx, key, source); err != nil {
-		errorLog(secretError("delete", key, err))
-		return
+		return secretError("delete", key, err)
 	}
 
 	successLog(fmt.Sprintf("Deleted %q.\n", key))
+	return nil
 }
 
-func (c *CLI) update(ctx context.Context, args []string) {
+func (c *CLI) update(ctx context.Context, args []string) error {
 	if len(args) != 3 {
-		usageLog("update <key> <value>")
-		return
+		return usageError{form: "update <key> <value>"}
 	}
 	key := args[1]
 	value := args[2]
 
 	updated, err := c.vault.Update(ctx, key, value, source)
 	if errors.Is(err, vault.ErrNotFound) {
-		errorLog(fmt.Sprintf("No secret named %q. Use \"create\" to add it.", key))
-		return
+		return fmt.Errorf("No secret named %q. Use \"create\" to add it.", key)
 	}
 	if err != nil {
-		errorLog(secretError("update", key, err))
-		return
+		return secretError("update", key, err)
 	}
 
 	successLog(fmt.Sprintf("Updated %q (now version %d).\n", key, updated.Version))
+	return nil
 }
 
-func (c *CLI) list(ctx context.Context, args []string) {
+func (c *CLI) list(ctx context.Context, args []string) error {
+	const form = "list [prefix]  or  list <text> fuzzy"
+
 	switch len(args) {
 	case 1:
-		c.printSecrets(ctx, "", "all")
+		return c.printSecrets(ctx, "", "all")
 	case 2:
-		c.printSecrets(ctx, args[1], "prefix")
+		return c.printSecrets(ctx, args[1], "prefix")
 	case 3:
 		mode := strings.ToLower(args[2])
-		if mode == "fuzzy" || mode == "f" {
-			c.printSecrets(ctx, args[1], "fuzzy")
-		} else {
-			warningLog(fmt.Sprintf("Unknown list option %q.", args[2]))
-			usageLog("list [prefix]  or  list <text> fuzzy")
+		if mode != "fuzzy" && mode != "f" {
+			return usageError{reason: fmt.Sprintf("Unknown list option %q.", args[2]), form: form}
 		}
+		return c.printSecrets(ctx, args[1], "fuzzy")
 	default:
-		usageLog("list [prefix]  or  list <text> fuzzy")
+		return usageError{form: form}
 	}
 }
 
 // secretError turns an error from the vault into a message for the prompt.
 // action is what was being attempted, e.g. "create".
-func secretError(action string, key string, err error) string {
+func secretError(action string, key string, err error) error {
 	switch {
 	case errors.Is(err, vault.ErrNotFound):
-		return fmt.Sprintf("No secret named %q.", key)
+		return fmt.Errorf("No secret named %q.", key)
 	case errors.Is(err, vault.ErrAlreadyExists):
-		return fmt.Sprintf("A secret named %q already exists. Use \"update\" to change its value.", key)
+		return fmt.Errorf("A secret named %q already exists. Use \"update\" to change its value.", key)
 	case errors.Is(err, vault.ErrDecrypt):
-		return fmt.Sprintf("Couldn't decrypt %q. VAULT_ENCRYPTION_KEY may have changed since it was stored.", key)
+		return fmt.Errorf("Couldn't decrypt %q. VAULT_ENCRYPTION_KEY may have changed since it was stored.", key)
 	default:
-		return fmt.Sprintf("Couldn't %s %q: %v", action, key, err)
+		return fmt.Errorf("Couldn't %s %q: %v", action, key, err)
 	}
 }
 
 // printSecrets prints a table of secrets whose keys match term. mode is "all",
 // "prefix" (key starts with term) or "fuzzy" (key contains term).
-func (c *CLI) printSecrets(ctx context.Context, term string, mode string) {
+func (c *CLI) printSecrets(ctx context.Context, term string, mode string) error {
 
 	secrets, err := c.vault.List(ctx)
 	if err != nil {
-		errorLog(fmt.Sprintf("Couldn't list secrets: %v", err))
-		return
+		return fmt.Errorf("Couldn't list secrets: %v", err)
 	}
 
 	term = strings.ToLower(term)
@@ -164,7 +158,7 @@ func (c *CLI) printSecrets(ctx context.Context, term string, mode string) {
 		} else {
 			infoLog(fmt.Sprintf("No secrets match %q.", term))
 		}
-		return
+		return nil
 	}
 
 	const (
@@ -213,4 +207,5 @@ func (c *CLI) printSecrets(ctx context.Context, term string, mode string) {
 		)
 		plainLog(row)
 	}
+	return nil
 }

@@ -2,7 +2,9 @@ package main
 
 import (
 	"context"
+	"errors"
 	"fmt"
+	"io"
 	"log"
 	"os"
 	"os/signal"
@@ -24,23 +26,51 @@ import (
 var version = "dev"
 
 func main() {
+	args := os.Args[1:]
 
-	if len(os.Args) > 1 && os.Args[1] == "version" {
+	mode := ""
+	if len(args) > 0 {
+		mode = args[0]
+	}
+
+	switch mode {
+	case "":
+		runServer(true)
+	case "serve":
+		runServer(false)
+	case "shell":
+		runShell()
+	case "migrate":
+		runMigrate(loadConfig(), args[1:])
+	case "version":
 		fmt.Println(buildVersion())
-		return
+	case "-h", "--help":
+		printUsage(os.Stdout)
+	default:
+		os.Exit(runCommand(args))
 	}
+}
 
-	cfg, err := config.Load()
-	if err != nil {
-		fatal(err)
-	}
+func printUsage(w io.Writer) {
+	fmt.Fprint(w, `Usage:
+  cove                    Run the API server with the interactive CLI on stdin
+  cove serve              Run the API server only
+  cove shell              Open the interactive CLI (e.g. docker exec -it cove /cove shell)
+  cove <command> [args]   Run one CLI command and exit, e.g. cove get MYAPP_KEY
+  cove migrate [status|up]
+                          Show or apply database migrations
+  cove version            Print the version
 
-	if len(os.Args) > 1 && os.Args[1] == "migrate" {
-		runMigrate(cfg, os.Args[2:])
-		return
-	}
+Run "cove help" to list the CLI commands.
+`)
+}
 
-	cfg, err = config.Ensure(cfg)
+// runServer runs the API server. With withShell, the interactive CLI also runs
+// on stdin (plain `cove`); `cove serve` runs the server alone.
+func runServer(withShell bool) {
+	cfg := loadConfig()
+
+	cfg, err := config.Ensure(cfg)
 	if err != nil {
 		fatal(err)
 	}
@@ -64,17 +94,7 @@ func main() {
 		}
 	}
 
-	db := database.New(cfg.DatabaseURL)
-
-	err = db.Connect(ctx)
-	if err != nil {
-		fatal(err)
-	}
-
-	if err := db.CheckSchemaVersion(ctx); err != nil {
-		fatal(err)
-	}
-
+	db := connect(ctx, cfg)
 	v := vault.New(db, encryption.NewCipher(cfg.EncryptionKey))
 	marker := bootstrap.NewMarker(cfg.MarkerDir)
 
@@ -83,12 +103,14 @@ func main() {
 		Port:         cfg.Port,
 		Version:      buildVersion(),
 	})
-	shell := cli.New(v, marker)
 
-	// The CLI runs alongside the server. When stdin closes (no terminal
-	// attached) it simply returns and the API keeps serving; `exit`, Ctrl+C
-	// and `docker stop` all cancel ctx, which stops the server gracefully.
-	go shell.Run(ctx, stop)
+	if withShell {
+		// When stdin closes (no terminal attached) the CLI simply returns and
+		// the API keeps serving; `exit`, Ctrl+C and `docker stop` all cancel
+		// ctx, which stops the server gracefully.
+		shell := cli.New(v, marker, cli.Options{Embedded: true})
+		go shell.Run(ctx, stop)
+	}
 
 	err = srv.Run(ctx)
 	db.Close()
@@ -96,6 +118,83 @@ func main() {
 		fatal(err)
 	}
 	log.Println("Cove stopped.")
+}
+
+// runShell runs the interactive CLI on its own, next to a running server.
+func runShell() {
+	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
+	defer stop()
+
+	db, shell := openClient(ctx)
+	defer db.Close()
+
+	done := make(chan struct{})
+	go func() {
+		shell.Run(ctx, stop)
+		close(done)
+	}()
+
+	select {
+	case <-done:
+	case <-ctx.Done():
+	}
+}
+
+// runCommand runs one CLI command, e.g. `cove get MYAPP_KEY`, and returns the
+// process exit status: 0 on success, 1 on failure.
+func runCommand(args []string) int {
+	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
+	defer stop()
+
+	db, shell := openClient(ctx)
+	defer db.Close()
+
+	if err := shell.Exec(ctx, args); err != nil {
+		cli.Report(err)
+		return 1
+	}
+	return 0
+}
+
+// openClient connects the shell and one-shot commands to the vault. They use
+// the same .env as the server but never generate secrets or run migrations:
+// that's the server's job.
+func openClient(ctx context.Context) (*database.Database, *cli.CLI) {
+	cfg := loadConfig()
+
+	if cfg.DatabaseURL == "" {
+		fatal(errors.New("COVE_DATABASE_URL is not set"))
+	}
+	if cfg.EncryptionKey == "" {
+		fatal(errors.New("VAULT_ENCRYPTION_KEY is not set. Start the Cove server once so it generates one"))
+	}
+
+	db := connect(ctx, cfg)
+	v := vault.New(db, encryption.NewCipher(cfg.EncryptionKey))
+	return db, cli.New(v, bootstrap.NewMarker(cfg.MarkerDir), cli.Options{})
+}
+
+// connect opens the database and confirms its schema matches this build.
+func connect(ctx context.Context, cfg config.Config) *database.Database {
+	db := database.New(cfg.DatabaseURL)
+
+	if err := db.Connect(ctx); err != nil {
+		fatal(err)
+	}
+
+	if err := db.CheckSchemaVersion(ctx); err != nil {
+		db.Close()
+		fatal(err)
+	}
+	return db
+}
+
+func loadConfig() config.Config {
+	cfg, err := config.Load()
+	if err != nil {
+		fatal(err)
+	}
+	return cfg
 }
 
 // buildVersion returns version, or for an unstamped local build, "dev" plus the
