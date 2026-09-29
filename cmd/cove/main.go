@@ -100,12 +100,13 @@ func runServer(withShell bool) {
 	db := connect(ctx, cfg)
 	v := vault.New(db, encryption.NewCipher(cfg.EncryptionKey))
 	gate := bootstrap.NewGate(cfg.MarkerDir, mustBootstrapAllowed(cfg))
+	tokenManager := tokens.NewManager(db)
 
 	srv := server.New(v, gate, db, server.Options{
 		ClientSecret: cfg.ClientSecret,
 		Port:         cfg.Port,
 		Version:      buildVersion(),
-		Tokens:       tokens.NewManager(db),
+		Tokens:       tokenManager,
 	})
 
 	if days, _ := cfg.RetentionDays(); days > 0 { // validated above
@@ -116,7 +117,7 @@ func runServer(withShell bool) {
 		// When stdin closes (no terminal attached) the CLI simply returns and
 		// the API keeps serving; `exit`, Ctrl+C and `docker stop` all cancel
 		// ctx, which stops the server gracefully.
-		shell := cli.New(v, gate, cli.Options{Embedded: true, Env: cfg.Env, Version: buildVersion(), DB: db})
+		shell := cli.New(v, gate, cli.Options{Embedded: true, Env: cfg.Env, Version: buildVersion(), DB: db, Tokens: tokenManager})
 		go shell.Run(ctx, stop)
 	}
 
@@ -199,7 +200,7 @@ func openClient(ctx context.Context) (*database.Database, *cli.CLI) {
 
 	db := connect(ctx, cfg)
 	v := vault.New(db, encryption.NewCipher(cfg.EncryptionKey))
-	return db, cli.New(v, bootstrap.NewGate(cfg.MarkerDir, mustBootstrapAllowed(cfg)), cli.Options{Env: cfg.Env, Version: buildVersion(), DB: db})
+	return db, cli.New(v, bootstrap.NewGate(cfg.MarkerDir, mustBootstrapAllowed(cfg)), cli.Options{Env: cfg.Env, Version: buildVersion(), DB: db, Tokens: tokens.NewManager(db)})
 }
 
 // connect opens the database and confirms its schema matches this build.

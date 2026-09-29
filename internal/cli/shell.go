@@ -11,6 +11,7 @@ import (
 	"strings"
 
 	"github.com/LSariol/Cove/internal/bootstrap"
+	"github.com/LSariol/Cove/internal/tokens"
 	"github.com/LSariol/Cove/internal/vault"
 	"golang.org/x/term"
 )
@@ -32,11 +33,16 @@ type Options struct {
 	// Version and DB are reported by `status`.
 	Version string
 	DB      StatusSource
+
+	// Tokens manages per-project tokens (`token ...`). If nil, the token
+	// commands report that they're unavailable.
+	Tokens *tokens.Manager
 }
 
 type CLI struct {
 	vault     *vault.Vault
 	bootstrap *bootstrap.Gate
+	tokens    *tokens.Manager
 	embedded  bool
 	prompt    string
 	env       string
@@ -60,6 +66,7 @@ func New(v *vault.Vault, gate *bootstrap.Gate, opts Options) *CLI {
 	c := &CLI{
 		vault:     v,
 		bootstrap: gate,
+		tokens:    opts.Tokens,
 		embedded:  opts.Embedded,
 		prompt:    promptFor(opts.Env),
 		env:       opts.Env,

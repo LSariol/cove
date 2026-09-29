@@ -140,6 +140,23 @@ func commandTable(embedded bool) []command {
 			complete: func(*CLI) []string { return []string{"lock", "open", "status"} },
 		},
 		{
+			names: []string{"token", "t"},
+			usages: []usage{
+				{forms: []string{"list", ""}, help: "Lists the per-project tokens and what each can reach."},
+				{forms: []string{"create <name> [--allow <pattern>]... [--write <pattern>]..."}, help: "Creates a token for a project and shows it once. A pattern is a key, a prefix\n" +
+					"      ending in * (e.g. 'lighthouse.*'), or * for every key. --allow lets it read\n" +
+					"      matching secrets; --write also lets it create, update and delete them."},
+				{forms: []string{"show <name>"}, help: "Shows a token's patterns, the secrets it can reach now, and recent changes."},
+				{forms: []string{"allow <pattern> <name>... [--write]"}, help: "Lets one or more tokens read (or, with --write, change) a key or pattern,\n" +
+					"      e.g. token allow shared.tmdb-api-key botsuite marquee"},
+				{forms: []string{"deny <pattern> <name>..."}, help: "Removes a key or pattern from one or more tokens."},
+				{forms: []string{"rotate <name> [--yes]"}, help: "Gives a token a new value with the same access. The old one stops working."},
+				{forms: []string{"revoke <name> [--yes]"}, help: "Deletes a token. The project can't reach Cove until it gets a new one."},
+			},
+			run:      (*CLI).tokenCmd,
+			complete: tokenCompletions,
+		},
+		{
 			names:    []string{"help", "h"},
 			usages:   []usage{{forms: []string{"[command]"}, help: "Shows every command, or just one."}},
 			run:      (*CLI).help,
