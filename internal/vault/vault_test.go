@@ -258,3 +258,31 @@ func TestReadEventsDoNotStoreTheValue(t *testing.T) {
 		}
 	}
 }
+
+// A rename keeps the secret's history, so restore still finds the values it
+// had under its old name (e.g. after renaming keys to the naming standard).
+func TestRestoreAfterRename(t *testing.T) {
+	ctx := context.Background()
+	v := vault.New(vaulttest.NewStore(), encryption.NewCipher("test-vault-key"))
+
+	_ = v.Create(ctx, "old.name", "first", "test")
+	_, _ = v.Update(ctx, "old.name", "second", "test")
+	if err := v.Rename(ctx, "old.name", "NEW_NAME", "test"); err != nil {
+		t.Fatal(err)
+	}
+
+	if _, from, err := v.Restore(ctx, "NEW_NAME", 1, "test"); err != nil || from != 1 {
+		t.Fatalf("restore version 1 after rename: from %d, %v", from, err)
+	}
+	if s, _ := v.Show(ctx, "NEW_NAME", "test"); s.Value != "first" {
+		t.Fatalf("value = %q, want the one from before the rename", s.Value)
+	}
+
+	// The previous-value form works too.
+	if _, _, err := v.Restore(ctx, "NEW_NAME", 0, "test"); err != nil {
+		t.Fatalf("restore previous after rename: %v", err)
+	}
+	if s, _ := v.Show(ctx, "NEW_NAME", "test"); s.Value != "second" {
+		t.Fatalf("value = %q, want second", s.Value)
+	}
+}

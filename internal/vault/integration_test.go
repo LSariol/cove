@@ -186,3 +186,26 @@ func TestIntegrationPruneReadEvents(t *testing.T) {
 		t.Fatal("cove_app deleted event log rows directly")
 	}
 }
+
+func TestIntegrationRestoreAfterRename(t *testing.T) {
+	v, _ := integrationVault(t)
+	ctx := context.Background()
+	oldKey, newKey := uniqueKey(t, "before-rename"), uniqueKey(t, "AFTER_RENAME")
+
+	if err := v.Create(ctx, oldKey, "first", "test"); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := v.Update(ctx, oldKey, "second", "test"); err != nil {
+		t.Fatal(err)
+	}
+	if err := v.Rename(ctx, oldKey, newKey, "test"); err != nil {
+		t.Fatal(err)
+	}
+
+	if _, from, err := v.Restore(ctx, newKey, 1, "test"); err != nil || from != 1 {
+		t.Fatalf("restore version 1 after rename: from %d, %v", from, err)
+	}
+	if s, _ := v.Show(ctx, newKey, "test"); s.Value != "first" {
+		t.Fatalf("value = %q, want the one from before the rename", s.Value)
+	}
+}

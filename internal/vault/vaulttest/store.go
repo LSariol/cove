@@ -197,9 +197,18 @@ func (s *Store) ValueVersions(ctx context.Context, key string) (map[int]string, 
 	s.mu.Lock()
 	defer s.mu.Unlock()
 
+	// Like the real query: events under key, plus every event of the secret
+	// key last belonged to (a rename keeps the secret's id).
+	var latestID string
+	for _, e := range s.Events {
+		if e.SecretKey == key && e.SecretID != "" {
+			latestID = e.SecretID
+		}
+	}
+
 	versions := make(map[int]string)
 	for _, e := range s.Events {
-		if e.SecretKey != key {
+		if e.SecretKey != key && (latestID == "" || e.SecretID != latestID) {
 			continue
 		}
 		switch {

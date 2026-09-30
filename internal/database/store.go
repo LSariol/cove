@@ -254,10 +254,18 @@ func (d *Database) LastEvent(ctx context.Context, key string, kind EventKind) (e
 // the event log: the value written by each create/update, and the last value
 // of a deleted secret. It returns ErrNotFound if key has no history.
 func (d *Database) ValueVersions(ctx context.Context, key string) (map[int]string, error) {
+	// Events recorded under key, plus every event of the secret that key
+	// last belonged to, whatever it was called then: a rename keeps the
+	// secret's id, so its values from before the rename are still found.
 	const query = `
+	WITH latest AS (
+		SELECT secret_id FROM cove.event_log
+		WHERE secret_key = $1 AND secret_id IS NOT NULL
+		ORDER BY id DESC LIMIT 1
+	)
 	SELECT secret_version, COALESCE(new_encrypted_value, old_encrypted_value)
 	FROM cove.event_log
-	WHERE secret_key = $1
+	WHERE (secret_key = $1 OR secret_id = (SELECT secret_id FROM latest))
 	  AND ((kind IN ('create', 'update') AND new_encrypted_value IS NOT NULL)
 	    OR (kind = 'delete' AND old_encrypted_value IS NOT NULL))
 	ORDER BY id`
