@@ -2,7 +2,6 @@ package tokens
 
 import (
 	"context"
-	"errors"
 	"fmt"
 	"log"
 	"slices"
@@ -296,6 +295,3 @@ func describeAccess(read []string, write []string) string {
 	}
 	return strings.Join(parts, "; ")
 }
-
-// IsNotFound reports whether err means the token doesn't exist.
-func IsNotFound(err error) bool { return errors.Is(err, ErrNotFound) }
