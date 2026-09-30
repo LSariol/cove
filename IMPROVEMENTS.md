@@ -4,7 +4,7 @@ A review of Cove v0.2.0: bugs, security concerns, and quality-of-life improvemen
 
 CoveClient has its own `IMPROVEMENTS.md`. Items that affect both repos are cross-referenced.
 
-> **Progress (v1.0.0, `release/1.0.0`):** most items are done; they're marked **Done** in the tables below, and the details sections are kept as the record of why. Still open: SEC-12 and QOL-9 (encryption key rotation), and hidden value entry from QOL-2. Unfamiliar terms are explained in the [Glossary](#10-glossary).
+> **Progress (v1.0.0, `release/1.0.0`):** most items are done; they're marked **Done** in the tables below, and the details sections are kept as the record of why. Still open: hidden value entry from QOL-2 (decided against: values stay visible; enter them in `cove shell`). Unfamiliar terms are explained in the [Glossary](#10-glossary).
 
 ---
 
@@ -68,7 +68,7 @@ With these rules, no project should need an immediate update.
 | [SEC-9](#sec-9-container-hardening) | Container runs as root, base image unpinned — **Done** | Low | S | Low | Safe |
 | [SEC-10](#sec-10-env-may-be-created-world-readable) | `.env` may be created world-readable — **Done** | Low | S | Low | Safe |
 | [SEC-11](#sec-11-no-rate-limiting) | No rate limiting on auth or bootstrap — **Done** | Low | S | Low | Safe |
-| [SEC-12](#sec-12-ciphertext-isnt-bound-to-its-key-and-has-no-format-version) | Ciphertext isn't bound to its key and has no format version | Low | M | Low | Care |
+| [SEC-12](#sec-12-ciphertext-isnt-bound-to-its-key-and-has-no-format-version) | Ciphertext isn't bound to its key and has no format version — **Done differently** (the vault records its key's fingerprint; rotation is one transaction) | Low | M | Low | Care |
 
 \* Depends on your network. If the host firewall already blocks port 2100 from outside, this is Medium.
 
@@ -104,7 +104,7 @@ With these rules, no project should need an immediate update.
 | [QOL-6](#qol-6-cli-history-and-status-commands) | CLI `history` and `status` commands — **Done** | Low | M | Medium | Safe |
 | [QOL-7](#qol-7-structured-request-logging) | Structured request/audit logging (no values) — **Done** | Low | S | Medium | Safe |
 | [QOL-8](#qol-8-batch--prefix-fetch) | Batch or prefix fetch (load all of a project's secrets in one call) — **Done** (batch by key list; no prefix fetch) | Low | M | Medium | Safe |
-| [QOL-9](#qol-9-vault-key-rotation) | Vault key rotation command | Low | L | Medium | Care |
+| [QOL-9](#qol-9-vault-key-rotation) | Vault key rotation command — **Done** (`cove rotate-key`) | Low | L | Medium | Care |
 | [QOL-10](#qol-10-event-log-retention) | Event log retention/pruning — **Done** | Low | M | Medium | Safe |
 | [QOL-11](#qol-11-version-reporting) | Version reporting (`/v0/version`, banner, `version` command) — **Done** | Low | S | Low | Safe |
 | [QOL-12](#qol-12-config-cleanup) | Config cleanup (`.env.example`, unused vars, one marker var) — **Done** | Low | S | Low | Safe |

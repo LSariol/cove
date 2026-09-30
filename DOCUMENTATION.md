@@ -140,6 +140,7 @@ All configuration comes from environment variables. `config.Load()` reads them f
 | `APP_ENV_PATH` | No | `config` | The `.env` file to load first, and where generated secrets are saved. Default: the `.env` file that was loaded. |
 | `APP_MARKER_PATH` | No | `bootstrap.Gate` | Directory for the bootstrap state file (`bootstrap.json`). Default: `/app/vault/markers`. The older name `APP_MARKER_DIR` also works. |
 | `COVE_BOOTSTRAP_ALLOWED_CIDRS` | No | `bootstrap.Gate` | Comma-separated networks and/or addresses that may use the bootstrap endpoint, e.g. `172.18.0.0/16`. Empty allows any address. An invalid entry stops startup. |
+| `VAULT_NEW_ENCRYPTION_KEY` | No | `main` | Only for `cove rotate-key`: the key to re-encrypt the vault with ([§11](#rotating-the-vault-key)). Remove it afterwards. |
 | `COVE_EVENT_LOG_RETENTION_DAYS` | No | `main` | Removes *read* events older than this many days, at startup and then daily. Creates, updates, deletes and renames are always kept. Empty keeps everything. |
 | `APP_ENV` | No | — | `DEV` / `PROD` label. Not read by the code yet. |
 
@@ -186,6 +187,7 @@ Roles, the database itself, and connect permissions are created once per environ
 | `00008_clear_read_event_values.sql` | Clears the encrypted value copies older read events stored (reads no longer store one) |
 | `00009_prune_read_events.sql` | `cove.prune_read_events(interval)`: removes old read events for `COVE_EVENT_LOG_RETENTION_DAYS`. Runs as `cove_owner`; `cove_app` may only call it |
 | `00010_tokens.sql` | `cove.tokens` (per-project tokens) and `cove.token_log` (every change to them; append-only for `cove_app`) |
+| `00011_vault_key.sql` | `cove.vault_key`: a fingerprint of the key the vault is encrypted with (`cove_app` may only record it once). `set_updated_at` no longer counts a re-encryption as a modification |
 
 Running them:
 
@@ -260,7 +262,8 @@ Per-project tokens ([§6](#project-tokens)). Manage them with the CLI's `token` 
 Consequences:
 
 - **If you lose `VAULT_ENCRYPTION_KEY`, every secret is gone.** Back it up somewhere other than the Cove host.
-- **You can't rotate the key yet.** Changing it makes every existing row undecryptable. To rotate, you'd need a script that decrypts each row with the old key and re-encrypts it with the new one (secrets **and** `event_log` values).
+- **Cove knows which key the vault is encrypted with.** `cove.vault_key` holds a fingerprint of it (a one-way hash; the key can't be worked out from it). On its first start, Cove checks that `VAULT_ENCRYPTION_KEY` decrypts a stored secret and records the fingerprint. After that it **refuses to start with a different key**, saying so, instead of failing every read. Every write checks it too, so values encrypted with two different keys can never be mixed.
+- **Changing the key means re-encrypting everything:** use `cove rotate-key` ([§11](#rotating-the-vault-key)). Just editing `VAULT_ENCRYPTION_KEY` makes Cove refuse to start.
 - The key is hashed with plain SHA-256, not a password KDF. That's fine for a long random key like the generated one. Don't use a short, human-chosen passphrase.
 
 ---
@@ -477,6 +480,7 @@ Before v1.0.0, every read/delete failure was `404` and every create/update failu
 | `decrypt_error` | 500 | the stored value can't be decrypted |
 | `get_all`, `read_error`, `create_error`, `update_error`, `delete_error`, `server_error`, `marker_error` | 500 | database / config / bootstrap state failures |
 | `too_many_requests` | 429 | too many failed attempts from this address; see `Retry-After` |
+| `wrong_key` | 500 | Cove's `VAULT_ENCRYPTION_KEY` isn't the vault's key: it was rotated while Cove was running (restart it with the new key) |
 | `not_ready` | 503 | `/v0/ready` when the database is unreachable |
 | `auth_unavailable` | 503 | a project token couldn't be checked (database unreachable) |
 
@@ -567,7 +571,7 @@ The prompt shows the environment from `APP_ENV`: `cove (dev)>`, and `cove (prod)
 | `search` | `s` | `search <text>` | Keys containing `text` (not case-sensitive). The older `list <text> fuzzy` still works. |
 | `info` | `i` | `info <key>` | Version, app reads, when and by whom it was last read, created and updated times, and which project tokens can read it. For a deleted key, says when and by whom it was deleted. |
 | `history` | | `history <key> [count]` | The last `count` events (default 20): when, what, version, source, detail. Works for deleted keys. |
-| `status` | | `status` | Version, environment, database, schema version, number of secrets, bootstrap state. Non-zero exit when something needs attention. |
+| `status` | | `status` | Version, environment, database, schema version, number of secrets, vault key (OK with fingerprint and last rotation, or WRONG), bootstrap state. Non-zero exit when something needs attention. |
 | `bootstrap` | `b` | `bootstrap open [project] [duration]` / `lock` / `status` | Opens the bootstrap endpoint for 10 minutes (or the given duration) to hand out a project's new token or the master token, closes it, or shows its state and recent attempts ([§7](#7-bootstrap-flow)). |
 | `token` | `t` | `token [list]` / `create <name> [--allow <p>]... [--write <p>]...` / `show <name>` / `allow <p> <name>... [--write]` / `deny <p> <name>...` / `rotate <name> [--yes]` / `revoke <name> [--yes]` | Per-project tokens ([§6](#project-tokens)). `create` and `rotate` print the token once, on stdout. Patterns that match no secret get a warning (usually a typo); `deny` warns if a wildcard still covers the key. |
 | `help` | `h` | `help [command]` / `help setup` / `help patterns` | A short grouped overview; one command in detail with examples; or a step-by-step guide to setting up a project, or to token patterns. Works without a database (`cove help`). |
@@ -715,6 +719,20 @@ When no project holds the master token any more, change it (see [Rotating the ma
 ### Rotating a project token
 
 `token rotate <project>` prints a new token with the same access; the old one stops working at once. Save it with `update lighthouse.token.<project> <new token>` and redeploy the project. For Lighthouse itself (which fetches its token with `LoadOrBootstrap`), delete its token file and use `bootstrap open lighthouse` instead. If a token may have leaked, `token revoke <project>` stops it immediately, and every shared secret it could read should be changed too (`info <key>` lists who can read a key).
+
+### Rotating the vault key
+
+`cove rotate-key` re-encrypts every secret, and every value copy in the event log, with a new `VAULT_ENCRYPTION_KEY`, in **one transaction**: it either finishes completely or changes nothing. Do it if the key may have leaked, or to replace a short key. It takes a second or two; projects with injected values keep running throughout.
+
+1. **Back up** the database (`pg_dump -d cove_db`) and the `.env` file, **with the old key**. Until you're sure everything works, that pair is your way back.
+2. Get a new key: `docker compose run --rm cove /cove rotate-key` prints a line to add (`VAULT_NEW_ENCRYPTION_KEY=...`) and changes nothing. Add that line to `/srv/server/storage/cove/.env`, keeping `VAULT_ENCRYPTION_KEY` as it is. The new key is now saved before anything uses it.
+3. Stop Cove: `docker compose stop cove`. (Recommended, not required: a Cove left running can't read or write until it's restarted with the new key, but it can never store anything with the old one.)
+4. Rotate: `docker compose run --rm cove /cove rotate-key`. It needs `COVE_MIGRATE_DATABASE_URL`, because only the schema owner may rewrite the event log. If any stored value can't be decrypted with the old key, it stops, names them, and changes nothing.
+5. In the `.env`: set `VAULT_ENCRYPTION_KEY` to the new value and delete the `VAULT_NEW_ENCRYPTION_KEY` line. If your editor wrote a new file, run the `chown` from [§10](#first-deploy) again.
+6. Start Cove: `docker compose up -d --force-recreate cove` (`--force-recreate` makes Docker pick up the edited file).
+7. **Check:** `docker exec cove /cove status` shows `Vault key: OK (fingerprint ..., rotated <now>)`, and `docker exec cove /cove get <a key>` works.
+
+If you start Cove after step 4 but forget step 5, it refuses to start and says exactly which lines to change. **Way back** after step 4: the old key no longer opens the vault, so restore the backup from step 1 (database and `.env` together).
 
 ### Rotating the master token
 

@@ -119,7 +119,7 @@ Then set `COVE_MIGRATE_DATABASE_URL` (as `cove_migrator`) and start Cove. It cre
 | `APP_MARKER_PATH`    | No       | Directory for the bootstrap state file. Defaults to `/app/vault/markers`. |
 | `COVE_BOOTSTRAP_ALLOWED_CIDRS` | No | Networks/addresses allowed to bootstrap, e.g. `172.18.0.0/16`. Empty allows any. |
 
-> **Important:** If you rotate `VAULT_ENCRYPTION_KEY`, existing secrets in the database cannot be decrypted. Back up your key and treat it like a master password.
+> **Important:** Back up `VAULT_ENCRYPTION_KEY` and treat it like a master password: without it, the stored secrets can't be decrypted. Don't just edit it (Cove will refuse to start with a key the vault wasn't encrypted with): change it with `cove rotate-key`, which re-encrypts everything. See [DOCUMENTATION.md §11](DOCUMENTATION.md#rotating-the-vault-key).
 
 ---
 
