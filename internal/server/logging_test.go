@@ -50,3 +50,22 @@ func TestRequestLog(t *testing.T) {
 		}
 	}
 }
+
+// With a project token, the log shows the token's name, not whatever the
+// X-Cove-Source header claims.
+func TestRequestLogShowsTheTokenName(t *testing.T) {
+	var buf bytes.Buffer
+	old := log.Writer()
+	log.SetOutput(&buf)
+	t.Cleanup(func() { log.SetOutput(old) })
+
+	api := newProjectAPI(t)
+	req := httptest.NewRequest("GET", "/v0/secrets/marquee.db-url", nil)
+	req.Header.Set("Authorization", "Bearer "+api.marquee)
+	req.Header.Set("X-Cove-Source", "pretending")
+	logRequests(api.handler).ServeHTTP(httptest.NewRecorder(), req)
+
+	if out := buf.String(); !strings.Contains(out, "source=marquee") || strings.Contains(out, "pretending") {
+		t.Fatalf("log = %q, want source=marquee", out)
+	}
+}

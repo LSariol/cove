@@ -58,6 +58,7 @@ func (s *Server) requireToken(next http.Handler) http.Handler {
 			tok, err := s.tokens.Authenticate(r.Context(), provided)
 			switch {
 			case err == nil:
+				setTokenName(r.Context(), tok.Name)
 				ctx := context.WithValue(r.Context(), callerKey{}, caller{project: &tok})
 				next.ServeHTTP(w, r.WithContext(ctx))
 				return
