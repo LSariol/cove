@@ -352,8 +352,9 @@ project only reads environment variables; it has no Cove code or token.
      create MARQUEE_TWITCH_CLIENT_ID abc123
      generate MARQUEE_SESSION_SECRET 64
    TYPE is one of: API_KEY, CLIENT_ID, CLIENT_SECRET, ACCESS_TOKEN,
-   REFRESH_TOKEN, TOKEN, URL, PASSWORD, SECRET. Capitals, digits and _ only,
-   so the name works as a ${...} variable in a compose file.
+   REFRESH_TOKEN, TOKEN, URL, PASSWORD, SECRET, ID. An optional role can
+   go before it: MARQUEE_DATABASE_MIGRATOR_URL. Capitals, digits and _
+   only, so the name works as a ${...} variable in a compose file.
 
 2. In the project's docker-compose.yml, refer to each secret as ${KEY}:
      environment:

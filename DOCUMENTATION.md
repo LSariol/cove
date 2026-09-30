@@ -437,12 +437,13 @@ The project uses CoveClient: `coveclient.New(os.Getenv("COVE_URL"), os.Getenv("C
 
 ### Key naming standard
 
-Every key is **`PROJECT_PLATFORM_TYPE`**: capitals, digits and `_` only.
+Every key is **`PROJECT_PLATFORM_TYPE`**, with an optional `ROLE` before the type (`PROJECT_PLATFORM_ROLE_TYPE`): capitals, digits and `_` only.
 
 | Part | Meaning | Examples |
 |---|---|---|
-| `PROJECT` | the owner; `SHARED` for keys several projects use | `BOTSUITE`, `MARQUEE`, `LIGHTHOUSE`, `PLOP`, `SHARED` |
-| `PLATFORM` | the service | `TWITCH`, `NETFLIX`, `TMDB`, `GITHUB`, `DISCORD`, `DATABASE`, `COVE` |
+| `PROJECT` | the owner; `SHARED` for keys several projects use | `BOTSUITE`, `MARQUEE`, `LIGHTHOUSE`, `PLOP`, `SHARED`, and `SPARK` for the server's own infrastructure (sparkdb's superuser, the Cloudflare tunnel) |
+| `PLATFORM` | the service | `TWITCH`, `NETFLIX`, `TMDB`, `GITHUB`, `DISCORD`, `OPENAI`, `CLOUDFLARE`, `DATABASE`, `COVE` |
+| `ROLE` (optional) | which of several credentials for the same platform | `APP`, `MIGRATOR`, `READER`, `OWNER`, `ADMIN` for database roles; `BOT`, `OWNER` for accounts |
 | `TYPE` | the kind of value, from this list | see below |
 
 | `TYPE` | For | Example |
@@ -454,6 +455,9 @@ Every key is **`PROJECT_PLATFORM_TYPE`**: capitals, digits and `_` only.
 | `URL` | connection strings, webhooks | `MARQUEE_DATABASE_URL`, `SHARED_DISCORD_WEBHOOK_URL` |
 | `PASSWORD` | passwords | `PLOP_SMTP_PASSWORD` |
 | `SECRET` | random values a project uses itself | `MARQUEE_SESSION_SECRET` |
+| `ID` | an identifier that isn't secret but belongs with the rest (e.g. a user ID) | `BOTSUITE_TWITCH_BOT_ID`, `MARQUEE_TWITCH_OWNER_ID` |
+
+Database examples: `BOTSUITE_DATABASE_URL` (the app's connection string), `BOTSUITE_DATABASE_APP_PASSWORD`, `BOTSUITE_DATABASE_READER_PASSWORD`, `MARQUEE_DATABASE_MIGRATOR_URL`, `SPARK_DATABASE_ADMIN_PASSWORD`.
 
 Why: `${...}` names must be letters, digits and `_` (Compose rejects `.` and `-`); the `PROJECT_` prefix gives each token one pattern (`BOTSUITE_*`; the `_` stops `BOT_*` matching `BOTSUITE_...`); and `list BOTSUITE_` / `search TWITCH` find things at a glance. The CLI warns on `create`, `generate` or `rename` of a non-standard name. `COVE_URL` isn't a secret: write it in the compose file.
 
