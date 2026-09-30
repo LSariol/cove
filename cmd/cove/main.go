@@ -175,6 +175,15 @@ func runCommand(args []string) int {
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer stop()
 
+	// Help needs no database, so it works anywhere, even before setup.
+	if args[0] == "help" || args[0] == "h" {
+		if err := cli.New(nil, nil, cli.Options{}).Exec(ctx, args); err != nil {
+			cli.Report(err)
+			return 1
+		}
+		return 0
+	}
+
 	db, shell := openClient(ctx)
 	defer db.Close()
 
