@@ -12,6 +12,7 @@ func (s *Server) defineRoutes(mux *http.ServeMux) {
 	// Authenticated routes
 	mux.Handle("/v0/secrets", s.requireToken(http.HandlerFunc(s.handleSecretsCollection)))
 	mux.Handle("/v0/secrets/", s.requireToken(http.HandlerFunc(s.handleSecretID)))
+	mux.Handle("/v0/batch", s.requireToken(http.HandlerFunc(s.batchHandler)))
 	mux.Handle("/v0/auth", s.requireToken(getOnly(http.HandlerFunc(s.authHandler))))
 	mux.Handle("/v0/version", s.requireToken(getOnly(http.HandlerFunc(s.versionHandler))))
 }

@@ -312,6 +312,12 @@ Response (`200 OK`):
 
 ---
 
+### Read Several Secrets
+
+**`POST /v0/batch`** with `{ "keys": ["a", "b", "c"] }` (1–100 keys) returns all of them in one request: `{ "secrets": [ {"key", "value", "version"}, ... ] }`. All or nothing: a key the token can't read fails the whole request with `403 forbidden_key` (without naming it; the server log does), and missing keys fail it with `404 not_found`, listing every missing key in `error.keys`.
+
+---
+
 ### Bootstrap
 
 **`GET /v0/bootstrap/lighthouse`** — No authentication required.

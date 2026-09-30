@@ -9,10 +9,13 @@ type APIResponse struct {
 	Error   *APIError `json:"error,omitempty"`
 }
 
-// APIError carries machine-readable and human-readable error detail.
+// APIError carries machine-readable and human-readable error detail. Keys,
+// when set, lists the secret keys the error is about (e.g. the missing keys
+// of a batch read).
 type APIError struct {
-	Type    string `json:"type"`
-	Message string `json:"message"`
+	Type    string   `json:"type"`
+	Message string   `json:"message"`
+	Keys    []string `json:"keys,omitempty"`
 }
 
 // SecretSummary is the public (non-sensitive) metadata for a single secret.

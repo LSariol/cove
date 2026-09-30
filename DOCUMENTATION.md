@@ -276,6 +276,8 @@ Base path: `/v0`. Every response is JSON with `Content-Type: application/json`.
 { "success": false, "error": { "type": "<code>", "message": "<text>" } }
 ```
 
+An error can also carry `"keys": [...]`, the secret keys it's about (e.g. the missing keys of a batch read).
+
 ### Authentication
 
 Every route except `/v0/health`, `/v0/ready` and `/v0/bootstrap/lighthouse` needs:
@@ -372,6 +374,7 @@ Why injection is the default: on a single server, anyone who can see a container
 | POST | `/v0/secrets/{key}` | yes | master token only | Create |
 | PATCH | `/v0/secrets/{key}` | yes | master token only | Update |
 | DELETE | `/v0/secrets/{key}` | yes | master token only | Delete |
+| POST | `/v0/batch` | yes | master token only | Read several secrets in one request (all or nothing) |
 
 ### Checks on `/v0/secrets/{key}`
 
@@ -441,6 +444,21 @@ A key that already exists returns `409 already_exists`; other failures `500 crea
 
 **`DELETE /v0/secrets/{key}`** returns `200` with `"action": "deleted"`. A missing key returns `404 not_found`; other failures `500 delete_error`.
 
+**`POST /v0/batch`** with body `{ "keys": ["marquee.db-url", "shared.tmdb-api-key"] }` (1–100 keys) returns `200`:
+```json
+{ "success": true, "data": { "secrets": [
+    { "key": "marquee.db-url", "value": "postgres://...", "version": 2 },
+    { "key": "shared.tmdb-api-key", "value": "...", "version": 1 } ] } }
+```
+Secrets come back in the order asked for, duplicates once. Each counts as a read and gets a `read` event, all in one transaction. It's **all or nothing**, checked in this order:
+
+1. The body must list 1–100 valid keys: otherwise `400 invalid_body` / `invalid_key`.
+2. A project token must be able to read **every** key: otherwise `403 forbidden_key`, **without saying which**. The server log names them (`docker logs cove`), so you can fix the access. This check comes before the existence check, so a batch can't reveal whether another project's key exists.
+3. Every key must exist: otherwise `404 not_found`, naming **every** missing key in the message and in `error.keys`, e.g. `"keys": ["marquee.one", "marquee.two"]`.
+4. If a value can't be decrypted: `500 decrypt_error`.
+
+If any check fails, nothing is read or counted. With the master token, `X-Cove-Source` is required, as for a single read. CoveClient's `GetSecrets(keys...)` uses this endpoint (and falls back to one request per key on an older Cove).
+
 Before v1.0.0, every read/delete failure was `404` and every create/update failure `500`. CoveClient only checks the success codes, so the more precise errors don't affect it.
 
 ### Error type reference
@@ -449,7 +467,7 @@ Before v1.0.0, every read/delete failure was `404` and every create/update failu
 |---|---|---|
 | `missing_token`, `invalid_token_format`, `invalid_token` | 401 | auth middleware |
 | `missing_key`, `invalid_key`, `missing_source`, `invalid_body` | 400 | secret routes |
-| `not_found` | 404 | unknown `/v0/secrets*` path; missing key on GET, PATCH or DELETE |
+| `not_found` | 404 | unknown `/v0/secrets*` path; missing key on GET, PATCH or DELETE; missing keys in a batch (listed in `error.keys`) |
 | `already_exists` | 409 | POST for a key that exists |
 | `forbidden_key` | 403 | a project token that doesn't cover the key |
 | `method_not_allowed` | 405 | wrong method |
