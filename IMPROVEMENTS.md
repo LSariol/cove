@@ -302,7 +302,7 @@ Every item follows the same layout: **what's happening**, **why it matters**, **
 
 **Why it matters.** It's like giving every guest a master key to every room. If one project leaks it (in a log, a repo, or a hacked container), all your secrets are exposed. Changing the token means updating every project at the same moment.
 
-**The fix (done in v1.0.0 as `cove.tokens`; see DOCUMENTATION.md §6 "Project tokens").** Give each project its own token, stored in a new `cove.clients` table. Each one can optionally be limited to certain keys (e.g. only `MYAPP_*`) or to read-only access. You'd create and cancel tokens with CLI commands like `token create myapp`, `token list`, and `token revoke myapp`. Cove would also know *which* project made each request, so the audit log becomes trustworthy (SEC-8).
+**The fix (done in v1.0.0 as `cove.tokens`; see DOCUMENTATION.md §8, "Project tokens").** Give each project its own token, stored in a new `cove.clients` table. Each one can optionally be limited to certain keys (e.g. only `MYAPP_*`) or to read-only access. You'd create and cancel tokens with CLI commands like `token create myapp`, `token list`, and `token revoke myapp`. Cove would also know *which* project made each request, so the audit log becomes trustworthy (SEC-8).
 
 **Will it break anything?** No. The master token keeps working. You move projects to their own tokens one at a time, whenever you like. This is the biggest job in this document, but also the biggest security gain.
 

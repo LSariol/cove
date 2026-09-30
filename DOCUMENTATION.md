@@ -1,334 +1,413 @@
 # Cove Documentation
 
-Full reference for Cove, a self-hosted secret vault. Version v1.0.0, API version `v0`.
+The complete reference for **Cove v1.0.0**, the self-hosted secret vault for the `spark` server's projects. API version `v0`.
 
-The [README](README.md) is a quick overview. This document goes further: how each piece works internally, how the server is deployed, how secrets are stored, and the known issues in the current code.
-
-Companion client library: [CoveClient](https://github.com/LSariol/CoveClient). It has its own `DOCUMENTATION.md`.
+- [README](README.md): a short overview and quick start.
+- [CHANGELOG](CHANGELOG.md): what changed in each release.
+- [CoveClient](https://github.com/LSariol/CoveClient): the Go client library, with its own `DOCUMENTATION.md`.
 
 ---
 
 ## Contents
 
 1. [Overview](#1-overview)
-2. [Architecture](#2-architecture)
-3. [Configuration](#3-configuration)
-4. [Database](#4-database)
-5. [Encryption](#5-encryption)
-6. [HTTP API](#6-http-api)
-7. [Bootstrap flow](#7-bootstrap-flow)
-8. [CLI](#8-cli)
-9. [Running locally](#9-running-locally)
-10. [Deploying with Docker](#10-deploying-with-docker)
-11. [Operations](#11-operations)
-12. [Known issues and gotchas](#12-known-issues-and-gotchas)
+2. [Quick reference](#2-quick-reference)
+3. [Architecture](#3-architecture)
+4. [Configuration](#4-configuration)
+5. [Database](#5-database)
+6. [Encryption and the vault key](#6-encryption-and-the-vault-key)
+7. [Security model](#7-security-model)
+8. [HTTP API](#8-http-api)
+9. [Connecting a project (the standard)](#9-connecting-a-project-the-standard)
+10. [Bootstrap](#10-bootstrap)
+11. [CLI](#11-cli)
+12. [Running locally](#12-running-locally)
+13. [Deploying with Docker](#13-deploying-with-docker)
+14. [Operations](#14-operations)
+15. [Troubleshooting](#15-troubleshooting)
+16. [Development](#16-development)
+17. [Known limitations](#17-known-limitations)
 
 ---
 
 ## 1. Overview
 
-Cove stores key/value secrets for other self-hosted projects. It is a single Go binary with two parts:
+Cove stores the secrets (API keys, passwords, connection strings, tokens) that the other projects on the server need. It's one Go program with two faces:
 
-- It runs an **HTTP API** on `APP_PORT`. Other apps call it (usually through CoveClient) to read and manage secrets.
-- It has a **CLI** for managing secrets directly: an interactive prompt (`cove shell`, or on stdin with plain `cove`) and one-shot commands (`cove list`).
+- An **HTTP API** that projects and Lighthouse call, usually through CoveClient.
+- A **CLI** for managing secrets by hand: `docker exec -it cove /cove shell` for a prompt, or one command at a time.
 
-Both use the same database, so a change made in one shows up in the other immediately.
+Both work on the same Postgres database, so a change in one shows up in the other at once.
 
-Main properties:
+**Where it fits:** Lighthouse, the orchestrator, reads secrets from Cove and injects them into each project when it deploys it ([§9](#9-connecting-a-project-the-standard)). Projects that need to change a secret themselves call Cove directly with their own token. Cove runs in Docker on the `spark` network, reachable only at `http://cove:2100`, with its data in the `cove_db` database on `sparkdb`.
 
-| Property | How it's done |
+| Property | How |
 |---|---|
-| Encryption at rest | AES-256-GCM. The key is SHA-256 of `VAULT_ENCRYPTION_KEY`. Only encrypted values are stored in the DB. |
-| Authentication | One shared bearer token (`COVE_CLIENT_SECRET`), compared in constant time. |
-| Auditing | Every create, read, update, and delete writes a row to `cove.event_log`, including the calling app (`X-Cove-Source`). |
-| Versioning | Each secret has a `version` counter that goes up on every update. Old encrypted values stay in the event log. |
-| First-boot setup | A one-time, unauthenticated "lighthouse" endpoint returns the bearer token to a new client. |
+| Encryption at rest | AES-256-GCM; the database only ever holds ciphertext. The key comes from `VAULT_ENCRYPTION_KEY`, which Cove fingerprints so it can't run with the wrong one. |
+| Access | A master token (`COVE_CLIENT_SECRET`, for emergencies) and **per-project tokens**, each limited to the keys it needs, read-only or read/write. |
+| Audit | Every create, read, update, delete and rename is recorded, with who did it, in the same transaction as the change. Token changes and bootstrap requests are recorded too. |
+| History | Every value a secret has had is kept (encrypted), so any version, or a deleted secret, can be restored. |
+| Onboarding | A bootstrap endpoint, closed by default, hands a new client (Lighthouse) its token once. |
+| Network | No published port; reachable only from containers on `spark`. |
+| Hardening | Runs as a non-root user in a read-only container with no Linux capabilities; failed logins are rate-limited. |
 
 ---
 
-## 2. Architecture
+## 2. Quick reference
+
+Everyday tasks, all in the Cove CLI (`docker exec -it cove /cove shell`, or `alias cove='docker exec -it cove /cove shell'`):
+
+| Task | Command |
+|---|---|
+| Add a secret | `create MARQUEE_TMDB_API_KEY abc123` (or `generate MARQUEE_SESSION_SECRET 64` for a random one) |
+| Change a secret | `update MARQUEE_TMDB_API_KEY newvalue`, then redeploy the projects that use it |
+| See a secret | `get MARQUEE_TMDB_API_KEY` |
+| Find secrets | `list MARQUEE_` (starts with), `search TWITCH` (contains) |
+| Who can read a secret / who read it | `info KEY`, `history KEY` |
+| Undo a change or a delete | `restore KEY` (previous value) or `restore KEY 3` (version 3) |
+| Rename to the naming standard | `rename old.name MARQUEE_PLATFORM_TYPE` |
+| Give a project its own token | `token create marquee --allow 'MARQUEE_*'` |
+| Share a key with projects | `token allow SHARED_OPENAI_API_KEY botsuite marquee` |
+| See what a project can reach | `token show marquee` |
+| Onboard Lighthouse | `bootstrap open lighthouse`, then start Lighthouse |
+| Health check | `status` |
+| Help | `help`, `help <command>`, `help setup`, `help patterns` |
+
+Naming: keys are `PROJECT_PLATFORM_TYPE`, e.g. `BOTSUITE_TWITCH_CLIENT_ID` ([§9](#key-naming-standard)).
+
+---
+
+## 3. Architecture
 
 ```
-cmd/cove/main.go              Entry point: picks the mode (server, serve, shell, one-shot command, migrate, version) and wires packages together
+cmd/cove/
+  main.go                   Entry point: picks the mode (serve, shell, one command, migrate, rotate-key, version) and wires the packages together
+  rotate.go                 cove rotate-key, and the startup message for a wrong vault key
 internal/
-  config/config.go            Config struct: every setting, read from the environment once
+  config/config.go          Every setting, read from the environment once; generating missing secrets
   encryption/
-    cipher.go                 Cipher: Encrypt / Decrypt (AES-256-GCM)
-    random.go                 GenerateSecret (random alphanumeric)
+    cipher.go               AES-256-GCM Encrypt / Decrypt, and the key fingerprint
+    random.go               GenerateSecret (random letters and digits)
   database/
-    database.go               pgxpool connection (New, Connect, Close)
-    migrate.go, migrations/   goose migrations and the startup schema check
-    store.go                  SQL queries only; values in and out are always encrypted
-    tx.go                     The Store interface and WithinTx (transactions)
-    types.go                  Secret and Event rows, EventLogInput, event kinds
+    database.go             Connection pool
+    migrate.go, migrations/ goose migrations (built into the binary) and the startup schema check
+    store.go                SQL for secrets and the event log
+    tokens.go               SQL for project tokens and their log
+    vaultkey.go             The vault key fingerprint, and RotateKey
+    tx.go                   The Store interface and WithinTx (transactions)
+    types.go                Row types
   vault/
-    vault.go                  The rules for secrets: encrypt/decrypt, store, and log every operation
-    keys.go                   ValidateKey
-  bootstrap/gate.go           The bootstrap gate: open window, handout, grace period, allowed networks
+    vault.go                The rules for secrets: encrypt, store, log every operation, key checks
+    keys.go                 ValidateKey
+    vaulttest/              In-memory Store for tests
+  tokens/
+    tokens.go               Token type, patterns, generation and hashing
+    manager.go              Create / rotate / revoke / allow / deny / authenticate, each logged
+    tokenstest/             In-memory token Store for tests
+  bootstrap/gate.go         The bootstrap gate: open window, one handout, grace period, allowed networks
   server/
-    server.go                 Server struct; Run serves until stopped, then shuts down gracefully
-    routes.go                 URL → handler table
-    middleware.go             Bearer-token check
-    secrets.go                /v0/secrets handlers
-    system.go                 /v0/health, /v0/ready, /v0/auth, /v0/version
-    bootstrap.go              /v0/bootstrap/lighthouse
-    respond.go                JSON envelope helpers (writeResponse / writeError)
-    logging.go                One log line per request (never values or tokens)
-    api_types.go              JSON response types
+    server.go               Server; Run serves until stopped, then shuts down gracefully
+    routes.go               URL → handler table
+    middleware.go           Token check (master or project token)
+    ratelimit.go            Per-address limit on failed attempts
+    secrets.go, batch.go    /v0/secrets and /v0/batch
+    system.go               /v0/health, /v0/ready, /v0/auth, /v0/version
+    bootstrap.go            /v0/bootstrap/lighthouse
+    respond.go, api_types.go, logging.go   JSON envelope, response types, one log line per request
   cli/
-    shell.go                  CLI struct, the prompt loop, Exec (one command), confirmations
-    terminal.go               Line editing, history and Tab completion for `cove shell`
-    commands.go               Command table (names, aliases, usage, help, completion) and help/exit
-    cmd_secrets.go            get / create / update / delete / rename / list / search
-    cmd_generate.go           generate
-    cmd_restore.go            restore
-    cmd_history.go            info / history
-    cmd_status.go             status
-    cmd_bootstrap.go          bootstrap open / lock / status
-    output.go                 stdout/stderr, symbols, color, and the prompt
+    shell.go, terminal.go   The prompt (line editing, Tab completion), Exec, confirmations
+    commands.go             Command table, help and guides
+    cmd_*.go                One file per group of commands
+    naming.go               The naming-standard warning
+    output.go               stdout/stderr, symbols, color, the prompt
 ```
 
-Dependencies point one way: `main` → `server` / `cli` → `vault` → `database` + `encryption`, with `bootstrap` used by `server` and `cli`. Only `config` reads environment variables; every other package gets its settings passed in.
+Dependencies point one way: `main` → `server` / `cli` → `vault` / `tokens` / `bootstrap` → `database` + `encryption`. Only `config` reads environment variables.
 
 **Where things go:**
-- A rule about secrets (validation, what gets logged, transactions) → `vault`. Both the API and the CLI get it automatically.
-- A new SQL query → `database/store.go`. A schema change → a new migration.
-- A new API route → a handler in `server/`, registered in `routes.go`.
-- A new CLI command → a function in a `cli/cmd_*.go` file, plus one entry in `commandTable()` in `commands.go`. `help` picks it up automatically.
-- A new setting → a field in `config.Config`, read in `FromEnv()`.
+- A rule about secrets (validation, what's logged, transactions) → `vault`, so the API and the CLI both get it.
+- A rule about tokens → `tokens`.
+- SQL → `database`; a schema change → a new migration ([§5](#migrations)).
+- An API route → a handler in `server/`, registered in `routes.go`.
+- A CLI command → a `cli/cmd_*.go` function plus one entry in `commandTable()`; `help` picks it up.
+- A setting → a field in `config.Config`, read in `fromEnv`.
 
-### Startup sequence (`cmd/cove/main.go`)
+### Startup (`cove serve`)
 
-1. `config.Load()` loads the `.env` file and returns a `Config`. It uses `APP_ENV_PATH` if that's set in the environment (as in docker-compose), otherwise the first of `./.env` and `/app/vault/.env` that exists. A file that exists but can't be parsed stops startup with the parse error.
-2. `config.Ensure()` generates any missing `COVE_CLIENT_SECRET` / `VAULT_ENCRYPTION_KEY`, saves them to `APP_ENV_PATH`, and uses them straight away. Then `cfg.Validate()` stops startup if `COVE_DATABASE_URL` or `APP_PORT` is missing, or the client secret is shorter than 24 characters (a short vault key only logs a warning), and Cove logs its version. Startup errors print one line, `cove: <message>`, and exit with status 1.
-3. A context is created that is cancelled on `SIGINT` / `SIGTERM`.
-4. If `COVE_MIGRATE_DATABASE_URL` is set, pending database migrations are applied (see [§4](#4-database)). A failed migration stops startup.
-5. `database.New(cfg.DatabaseURL)` and `Connect()` opens a `pgxpool` and pings it with a 3-second timeout.
-6. `CheckSchemaVersion()` confirms every migration built into this binary has been applied. If not, Cove stops with a message saying to set `COVE_MIGRATE_DATABASE_URL`.
-7. A `vault.Vault` is built from the database and an `encryption.Cipher`, and shared by the server and CLI.
-8. In plain `cove`, the CLI starts in its own goroutine on stdin (`cove serve` skips it). When stdin closes, the CLI simply returns and the API keeps serving.
-9. `srv.Run(ctx)` serves the API until the context is cancelled: by `SIGINT`/`SIGTERM` (Ctrl+C, `docker stop`) or the CLI's `exit`. It then stops accepting requests, gives those in progress up to 5 seconds, closes the database pool, and logs `Cove stopped.`
+1. `config.Load` reads the `.env` file: `APP_ENV_PATH` if set (as in Docker), else the first of `./.env` and `/app/vault/.env`.
+2. `config.Ensure` generates a missing `COVE_CLIENT_SECRET` / `VAULT_ENCRYPTION_KEY` and saves it to that file. `Validate` stops startup if `COVE_DATABASE_URL` or `APP_PORT` is missing, a setting is malformed, or the master token is under 24 characters (a short vault key only warns).
+3. If `COVE_MIGRATE_DATABASE_URL` is set, pending migrations are applied.
+4. The connection pool opens as `cove_app`; `CheckSchemaVersion` refuses a database missing any migration this build needs.
+5. `EnsureKey`: the first time, Cove checks that `VAULT_ENCRYPTION_KEY` decrypts a stored secret and records its fingerprint; afterwards it refuses to start with any other key.
+6. The API serves on `0.0.0.0:$APP_PORT` until `SIGINT`/`SIGTERM` (`docker stop`), then gives requests in progress 5 seconds to finish. With `COVE_EVENT_LOG_RETENTION_DAYS`, old read events are pruned daily.
 
-`cove shell` and one-shot commands follow steps 1, 5 and 6 only: they use the server's `.env`, but never generate secrets or run migrations.
+Every startup error is one line, `cove: <message>`, and exit status 1. `cove shell` and one-shot commands use the same `.env` and steps 1 and 4 only; they never generate secrets or migrate.
 
-### Request flow
+### A request
 
 ```
-HTTP request
-  → http.ServeMux (routes.go: defineRoutes)
-  → requireClientSecret middleware (middleware.go)      [not for /health, /bootstrap]
-  → handleSecretsCollection / handleSecretID (secrets.go) [path + key + X-Cove-Source checks]
-  → getSecret / postSecret / patchSecret / deleteSecret (secrets.go)
-  → vault.Get / Create / Update / Delete / List → encryption.Cipher
-  → database store queries (store.go) + LogEvent
-  → writeResponse / writeError (JSON envelope)
+HTTP request → logRequests (one log line) → ServeMux (routes.go)
+  → requireToken: master or project token; rate limit on failures   [not /health, /ready, /bootstrap]
+  → handler: key checks, project-token access check, X-Cove-Source for the master token
+  → vault: encrypt/decrypt, store, event log, key check — one transaction
+  → JSON envelope
 ```
 
 ---
 
-## 3. Configuration
+## 4. Configuration
 
-All configuration comes from environment variables. `config.Load()` reads them from a `.env` file. godotenv **never overrides** a variable that is already set, so values from docker-compose's `environment:` section take priority over the `.env` file.
+Settings are environment variables, read once from the `.env` file. Values already in the environment (e.g. Compose's `environment:`) take priority over the file.
 
-| Variable | Required | Used by | Description |
-|---|---|---|---|
-| `COVE_DATABASE_URL` | **Yes** | `database.New` | Connection string for the runtime role, e.g. `postgres://cove_app:pass@sparkdb:5432/cove_db`. |
-| `COVE_MIGRATE_DATABASE_URL` | No | `database.Migrate` | Connection string for the migrator role, e.g. `postgres://cove_migrator:pass@sparkdb:5432/cove_db`. When set, Cove applies pending migrations on startup and `cove migrate` works. When unset, the database must already be migrated. |
-| `COVE_CLIENT_SECRET` | Yes* | `server` (middleware, bootstrap) | Bearer token that clients must send. Must be at least 24 characters. *Generated (32 chars) if empty. |
-| `VAULT_ENCRYPTION_KEY` | Yes* | `encryption` | Master key material. SHA-256 of this value is the AES key. Shorter than 24 characters logs a warning. *Generated (45 chars) if empty. |
-| `APP_PORT` | **Yes** | `server.Start` | Listen port. The server binds `0.0.0.0:$APP_PORT`. |
-| `APP_ENV_PATH` | No | `config` | The `.env` file to load first, and where generated secrets are saved. Default: the `.env` file that was loaded. |
-| `APP_MARKER_PATH` | No | `bootstrap.Gate` | Directory for the bootstrap state file (`bootstrap.json`). Default: `/app/vault/markers`. |
-| `COVE_BOOTSTRAP_ALLOWED_CIDRS` | No | `bootstrap.Gate` | Comma-separated networks and/or addresses that may use the bootstrap endpoint, e.g. `172.18.0.0/16`. Empty allows any address. An invalid entry stops startup. |
-| `VAULT_NEW_ENCRYPTION_KEY` | No | `main` | Only for `cove rotate-key`: the key to re-encrypt the vault with ([§11](#rotating-the-vault-key)). Remove it afterwards. |
-| `COVE_EVENT_LOG_RETENTION_DAYS` | No | `main` | Removes *read* events older than this many days, at startup and then daily. Creates, updates, deletes and renames are always kept. Empty keeps everything. |
-| `APP_ENV` | No | — | `DEV` / `PROD` label. Not read by the code yet. |
-
-Generated secrets use `encryption.GenerateSecret(n)`: `n` characters from `[a-zA-Z0-9]`, picked with `crypto/rand`.
-
-> **Note:** when `config.Store` saves a generated secret, it rewrites the whole `.env` file: comments and formatting are lost, values are re-quoted, and the file is set to `600` (owner only). A `.env` it can't parse is left untouched.
-
-### Dev vs. prod values
-
-| | Dev (`.env`) | Prod (`docker-compose.yml`) |
+| Variable | Required | Description |
 |---|---|---|
-| `APP_PORT` | `2110` | `2100` |
-| `.env` location | `./.env` | `/app/vault/.env` (bind-mounted, **read-only**) |
-| Marker dir | `./markers` | `/app/vault/markers` (bind-mounted) |
+| `COVE_DATABASE_URL` | **Yes** | Connection string for the runtime role, e.g. `postgres://cove_app:pass@sparkdb:5432/cove_db`. |
+| `COVE_MIGRATE_DATABASE_URL` | Recommended | Connection string for the migrator role (`cove_migrator`). When set, Cove applies pending migrations on startup. `cove migrate` and `cove rotate-key` need it. |
+| `COVE_CLIENT_SECRET` | Yes* | The master token: full access to everything. At least 24 characters. *Generated (32 characters) if empty and the file is writable. |
+| `VAULT_ENCRYPTION_KEY` | Yes* | The vault key ([§6](#6-encryption-and-the-vault-key)). Under 24 characters only warns. *Generated (45 characters) if empty and the file is writable. **Never just edit it:** use `cove rotate-key`. |
+| `VAULT_NEW_ENCRYPTION_KEY` | No | Only while rotating the vault key ([§14](#rotating-the-vault-key)); delete it afterwards. |
+| `APP_PORT` | **Yes** | Port the API listens on (`2100` in Docker, `2110` for local dev). |
+| `APP_ENV` | No | `DEV` or `PROD`, shown in the CLI prompt (`cove (prod)>` in red). |
+| `APP_ENV_PATH` | No | The `.env` file to load first, and where generated secrets are saved. Default: the file that was loaded. |
+| `APP_MARKER_PATH` | No | Directory for the bootstrap state file. Default: `/app/vault/markers`. |
+| `COVE_BOOTSTRAP_ALLOWED_CIDRS` | No | Networks or addresses allowed to use the bootstrap endpoint, comma-separated, e.g. `172.18.0.0/16`. Empty allows any. |
+| `COVE_EVENT_LOG_RETENTION_DAYS` | No | Removes *read* events older than this many days, daily. Changes are always kept. Empty keeps everything. |
+
+A malformed value (a bad network, a non-number) stops startup with a message naming the setting. Generated secrets are random letters and digits from `crypto/rand`. When Cove saves one, it rewrites the `.env` file (comments are lost) with owner-only permissions; in Docker the file is mounted read-only, so set both values yourself.
 
 ---
 
-## 4. Database
+## 5. Database
 
-Cove uses PostgreSQL through `github.com/jackc/pgx/v5/pgxpool`. The schema is managed by [goose](https://github.com/pressly/goose) migrations in `internal/database/migrations/`, which are built into the binary.
+Postgres, through `pgx`. The schema is the `cove` schema in `cove_db`, managed by goose migrations built into the binary.
 
 ### Roles
 
 | Role | Login | Used for |
 |---|---|---|
-| `cove_owner` | No | Owns the `cove` schema and everything in it |
-| `cove_migrator` | Yes | Runs migrations. Member of `cove_owner` with `SET role = 'cove_owner'`, so everything it creates is owned by `cove_owner` |
+| `cove_owner` | No | Owns the schema and everything in it |
+| `cove_migrator` | Yes | Runs migrations and key rotation. Member of `cove_owner` with `SET role = 'cove_owner'`, so what it creates is owned by `cove_owner` |
 | `cove_app` | Yes | Cove at runtime (`COVE_DATABASE_URL`) |
-| `cove_reader` | Yes | Read-only access (pgAdmin, debugging) |
+| `cove_reader` | Yes | Read-only access for inspection (pgAdmin) |
 
-Roles, the database itself, and connect permissions are created once per environment by an admin (they're server-wide, so they can't live in Cove's migrations). The migrations need `cove_app` and `cove_reader` to exist, and `cove_owner` must own `cove_db`.
+Roles, the database and connect access are created once per environment by an admin (they're server-wide, so migrations can't create them):
+
+```sql
+CREATE ROLE cove_owner    NOLOGIN;
+CREATE ROLE cove_migrator LOGIN PASSWORD '...';
+CREATE ROLE cove_app      LOGIN PASSWORD '...';
+CREATE ROLE cove_reader   LOGIN PASSWORD '...';
+GRANT cove_owner TO cove_migrator;
+ALTER ROLE cove_migrator SET role = 'cove_owner';
+
+CREATE DATABASE cove_db OWNER cove_owner;
+REVOKE ALL ON DATABASE cove_db FROM PUBLIC;
+GRANT CONNECT ON DATABASE cove_db TO cove_migrator, cove_app, cove_reader;
+```
+
+What `cove_app` may do, by table (granted by the migrations):
+
+| Table | `cove_app` | Why |
+|---|---|---|
+| `secrets` | read, insert, update, delete | the vault itself |
+| `event_log` | read, insert | **append-only**: the running app can't rewrite history. Old *read* events are pruned only through `prune_read_events`, which can't touch anything else |
+| `tokens` | read, insert, update, delete | token management |
+| `token_log`, `bootstrap_log` | read, insert | append-only |
+| `vault_key` | read, insert | may record the key once; only the owner (`cove rotate-key`) can change it |
+| `goose_db_version` | read | the startup schema check |
+
+`cove_reader` can read every table. Token hashes and ciphertext are useless without the tokens and the vault key.
 
 ### Migrations
 
 | Migration | What it does |
 |---|---|
-| `00001_baseline.sql` | The v0.2.0 schema exactly as it was in prod. Only creates what's missing, so on an existing database it changes nothing. |
-| `00002_role_grants.sql` | Grants for `cove_app` / `cove_reader`, default privileges for future tables, and makes `event_log` append-only for `cove_app` |
-| `00003_rename_columns.sql` | v1.0.0 column names, and replaces the broken `set_last_modified()` trigger with `set_updated_at()` |
-| `00004_event_log_history_index.sql` | Index for per-secret history lookups |
-| `00005_secret_key_format_check.sql` | Key format rule (`[A-Za-z0-9._-]`, 1–256 chars), `NOT VALID` so existing rows aren't checked |
-| `00006_event_log_rename_and_detail.sql` | Adds the `rename` event kind and a `detail` column (e.g. "renamed from X", "restored version 3") |
-| `00007_bootstrap_log.sql` | `cove.bootstrap_log`: every bootstrap request (time, address, outcome). Append-only for `cove_app` |
-| `00008_clear_read_event_values.sql` | Clears the encrypted value copies older read events stored (reads no longer store one) |
-| `00009_prune_read_events.sql` | `cove.prune_read_events(interval)`: removes old read events for `COVE_EVENT_LOG_RETENTION_DAYS`. Runs as `cove_owner`; `cove_app` may only call it |
-| `00010_tokens.sql` | `cove.tokens` (per-project tokens) and `cove.token_log` (every change to them; append-only for `cove_app`) |
-| `00011_vault_key.sql` | `cove.vault_key`: a fingerprint of the key the vault is encrypted with (`cove_app` may only record it once). `set_updated_at` no longer counts a re-encryption as a modification |
+| `00001_baseline` | The v0.2.0 schema as it was in prod; creates only what's missing |
+| `00002_role_grants` | Grants for `cove_app` / `cove_reader`, default privileges, append-only `event_log` |
+| `00003_rename_columns` | v1.0.0 column names; replaces the broken `set_last_modified` trigger with `set_updated_at` |
+| `00004_event_log_history_index` | Index for per-secret history |
+| `00005_secret_key_format_check` | Key format rule (`[A-Za-z0-9._-]`, 1–256), `NOT VALID` so old rows aren't checked |
+| `00006_event_log_rename_and_detail` | `rename` event kind and the `detail` column |
+| `00007_bootstrap_log` | `bootstrap_log` |
+| `00008_clear_read_event_values` | Clears value copies old read events stored |
+| `00009_prune_read_events` | `prune_read_events(interval)` for retention |
+| `00010_tokens` | `tokens` and `token_log` |
+| `00011_vault_key` | `vault_key`; a re-encryption no longer bumps `updated_at` |
 
-Running them:
+- **On startup** with `COVE_MIGRATE_DATABASE_URL`; a Postgres lock stops two instances migrating at once. **By hand:** `cove migrate status`, `cove migrate up`.
+- Cove refuses to start if the database is missing a migration it needs. A database *newer* than the binary is allowed, so rolling back the code after an additive migration still works.
+- **Rules for new ones:** every schema change is a migration; never edit one that has run in prod; name it `000NN_description.sql` starting with `-- +goose Up`; wrap `$$` blocks in `-- +goose StatementBegin` / `StatementEnd`; forward-only (a mistake is fixed by the next migration).
 
-- **On startup:** set `COVE_MIGRATE_DATABASE_URL`. Pending migrations are applied before Cove connects as `cove_app`. A Postgres advisory lock stops two instances migrating at once.
-- **By hand:** `cove migrate status` lists each migration and whether it's applied. `cove migrate up` applies pending ones. Both use `COVE_MIGRATE_DATABASE_URL`.
-- Applied migrations are recorded in `cove.goose_db_version`.
+### Tables
 
-Rules for new migrations:
-
-- **Every database change is a migration.** Never change the schema by hand.
-- **Never edit a migration that has been applied in prod.** Add a new one.
-- Name them `000NN_description.sql` with the next number, starting with `-- +goose Up`. Wrap statements containing `$$` (functions, `DO` blocks) in `-- +goose StatementBegin` / `-- +goose StatementEnd`.
-- Forward-only: there are no down migrations. If something is wrong, the next migration fixes it.
-
-### `cove.secrets`
+**`secrets`**: one row per secret.
 
 | Column | Notes |
 |---|---|
-| `id` | UUID primary key |
-| `key` | The name clients use. Unique. Must match `[A-Za-z0-9._-]`, 1–256 characters. |
-| `encrypted_value` | Encrypted with AES-GCM and base64url-encoded. Never plaintext. |
-| `version` | Starts at 1. `UpdateSecret` adds 1. |
-| `read_count` | Goes up by 1 every time an app reads the secret through the API. The CLI's `get` doesn't count. Exposed in the API as `times_pulled`. |
-| `created_at` / `updated_at` | `updated_at` is set by the `set_updated_at` trigger on any change except a `read_count`-only update. |
+| `id` | UUID; stays the same through renames |
+| `key` | The name, unique, `[A-Za-z0-9._-]`, 1–256 characters |
+| `encrypted_value` | AES-GCM ciphertext, base64url |
+| `version` | 1 on create, +1 on every update or restore |
+| `read_count` | Reads by apps through the API (`times_pulled` in the API); the CLI's `get` doesn't count |
+| `created_at`, `updated_at` | `updated_at` changes only on real modifications (not reads or re-encryption) |
 
-### `cove.event_log`
+**`event_log`**: the audit trail and the value history. Every vault operation writes one row in the same transaction; if it can't, the operation fails.
 
-Every operation in `vault` writes one row through `LogEvent`:
+| `kind` | Value copy stored | Written by |
+|---|---|---|
+| `create` | the new value | create, restore of a deleted secret |
+| `read` | none (who read which version) | API reads, the CLI's `get` |
+| `update` | old and new value | update, restore |
+| `delete` | the deleted value | delete |
+| `rename` | none | rename, once under each name |
 
-| `kind` | `old_encrypted_value` | `new_encrypted_value` | Written by |
-|---|---|---|---|
-| `create` | `NULL` | new ciphertext | `Vault.Create` |
-| `read` | `NULL` | `NULL` | `Vault.Get` (API) / `Vault.Show` (CLI `get`) |
-| `update` | previous ciphertext | new ciphertext | `Vault.Update`, `Vault.Restore` |
-| `delete` | deleted ciphertext | `NULL` | `Vault.Delete` |
-| `rename` | `NULL` | `NULL` | `Vault.Rename`, once under the old key and once under the new |
+`source` is who did it: the project token's name, the `X-Cove-Source` header for the master token, or `cove_cli`. `detail` holds context such as "renamed from X" or "restored version 3".
 
-`kind` is the enum `cove.secret_event_kind`. `detail` holds optional context such as "renamed from X" or "restored version 3". `source` is the token's name for API calls made with a project token, the `X-Cove-Source` header value for calls made with the master token, or `cove_cli` for CLI calls. `secret_version` is the secret's version after the operation. `occurred_at` is set automatically.
+**`tokens`**: `name` (lowercase, e.g. `botsuite`), `token_hash` (SHA-256; **the token itself is never stored**), `read_patterns`, `write_patterns`, `created_at`, `rotated_at`, `last_used_at` (updated at most once a minute).
 
-The log holds ciphertext only, and only on the events that change a value (reads record who read which version, not the value). `restore` uses it to bring back earlier values.
+**`token_log`**: every create, rotate, revoke, allow, deny and key rename that changed a token. Kept after a token is revoked.
 
-**Every operation and its event are saved in one transaction.** If the event can't be recorded, the operation fails and nothing changes, so nothing happens without a record. Updates lock the secret's row first, so concurrent changes are applied and logged one after another.
+**`bootstrap_log`**: every bootstrap request: time, address, outcome (`granted`, `redelivered`, `locked`, `expired`, `forbidden`, `error`).
 
-The table is **append-only for `cove_app`**: it has `SELECT` and `INSERT` only, so the running app can't rewrite history. The one exception is `COVE_EVENT_LOG_RETENTION_DAYS`, which removes old *read* events through a function that can't touch anything else.
+**`vault_key`**: one row, the fingerprint of the vault key, when it was recorded, and when it was last rotated.
 
-You don't need SQL to read it: the CLI's `history <key>` and `info <key>` show a secret's events and last read, and `restore` brings back earlier values.
+---
 
-### `cove.tokens` and `cove.token_log`
+## 6. Encryption and the vault key
 
-Per-project tokens ([§6](#project-tokens)). Manage them with the CLI's `token` command, not SQL.
+- **Algorithm:** AES-256-GCM with a random 12-byte nonce per value. The AES key is SHA-256 of `VAULT_ENCRYPTION_KEY`. Stored as base64url(nonce ‖ ciphertext ‖ tag). GCM detects tampering, so a wrong key or altered value is an error, never garbage.
+- **The key is everything.** Without `VAULT_ENCRYPTION_KEY`, the database is unreadable. Back it up somewhere other than the server ([§14](#backups)).
+- **Cove knows its key.** `vault_key` holds a one-way fingerprint of it. On the first start Cove checks that the key decrypts a stored secret, then records it; afterwards it **refuses to start with any other key**. Every write checks the fingerprint at the end of its transaction, so values encrypted with two different keys can never be mixed, even while a rotation runs.
+- **Changing the key** means re-encrypting everything: `cove rotate-key` ([§14](#rotating-the-vault-key)) does it in one transaction.
+- Plain SHA-256 is fine for a long random key like the generated one; don't use a short human passphrase.
 
-| Column | Notes |
+---
+
+## 7. Security model
+
+What protects what, and what's left to you.
+
+| Threat | Protection |
 |---|---|
-| `name` | The project, e.g. `lighthouse`. Unique; lowercase letters, digits, `.`, `_`, `-`; can't start with `cove`. Recorded as the source of the project's requests. |
-| `token_hash` | SHA-256 of the token. **The token itself is never stored**; it's shown once, when created or rotated. |
-| `read_patterns` / `write_patterns` | What the token can reach (see below). Write patterns also allow reading. |
-| `created_at` / `rotated_at` / `last_used_at` | `last_used_at` is updated at most once a minute per token. |
+| Someone on the LAN or internet | No published port; only containers on `spark` can connect. |
+| Guessing tokens | Tokens are 32+ random characters; 10 failures a minute from an address block it for 5 minutes. |
+| A leaked project token | It reaches only its own keys (and writes only its `--write` keys); `token revoke` stops it at once without touching other projects. |
+| A compromised project reading others' secrets | Project tokens are scoped; with injection, a project holds only its own values. |
+| A project changing a shared secret | Tokens are read-only unless given `--write` for specific keys. |
+| Probing which keys exist | Forbidden answers don't depend on whether the key exists, for single reads and batches. |
+| A spoofed audit trail | With a project token the source is the token's name; the header can't change it. The event log is append-only for the app. |
+| A compromised Cove process rewriting history | `cove_app` can't update or delete the event, token or bootstrap logs, or change the recorded vault key. |
+| A container breakout | Runs as user 10001, read-only filesystem, no capabilities, no new privileges; the binary can't be modified. |
+| Database dump stolen | Values are encrypted; useless without the vault key. |
+| Secrets in logs | Request logs never include bodies, values or tokens; the CLI isn't attached to `docker logs`. |
+| Bootstrap abuse | Closed by default, one handout per opening, 10-minute window, optional network allowlist, every attempt logged. |
 
-`cove.token_log` records every create, rotate, revoke, allow, deny, and key rename that changed a token, with the source (`cove_cli`). It's append-only for `cove_app`, and it outlives revoked tokens. `token show <name>` shows the latest entries. Each change and its log entry are saved in one transaction.
-
----
-
-## 5. Encryption
-
-`internal/encryption/cipher.go`
-
-- **Key:** `sha256.Sum256([]byte(VAULT_ENCRYPTION_KEY))`, which gives 32 bytes, so AES-256. It's computed once, when `encryption.NewCipher` is called at startup.
-- **Mode:** AES-GCM with a random 12-byte nonce for each encryption.
-- **Stored format:** `base64.URLEncoding( nonce || ciphertext || GCM tag )`.
-- **Decrypt:** base64url-decodes the value, splits off the first 12 bytes as the nonce, then `gcm.Open`. GCM authenticates the data, so a wrong key or tampered value returns an error instead of garbage.
-
-Consequences:
-
-- **If you lose `VAULT_ENCRYPTION_KEY`, every secret is gone.** Back it up somewhere other than the Cove host.
-- **Cove knows which key the vault is encrypted with.** `cove.vault_key` holds a fingerprint of it (a one-way hash; the key can't be worked out from it). On its first start, Cove checks that `VAULT_ENCRYPTION_KEY` decrypts a stored secret and records the fingerprint. After that it **refuses to start with a different key**, saying so, instead of failing every read. Every write checks it too, so values encrypted with two different keys can never be mixed.
-- **Changing the key means re-encrypting everything:** use `cove rotate-key` ([§11](#rotating-the-vault-key)). Just editing `VAULT_ENCRYPTION_KEY` makes Cove refuse to start.
-- The key is hashed with plain SHA-256, not a password KDF. That's fine for a long random key like the generated one. Don't use a short, human-chosen passphrase.
+**Not protected against:** someone with root or Docker access on the server (they can read the `.env` with the vault key and master token, and the containers' environments). Cove is only as safe as the server. Keep the master token for emergencies, and back up the vault key off the server.
 
 ---
 
-## 6. HTTP API
+## 8. HTTP API
 
-Base path: `/v0`. Every response is JSON with `Content-Type: application/json`.
-
-### Response envelope
+Base path `/v0`, JSON everywhere. Clients use `http://cove:2100` on the `spark` network.
 
 ```json
 { "success": true,  "data":  { ... } }
-{ "success": false, "error": { "type": "<code>", "message": "<text>" } }
+{ "success": false, "error": { "type": "<code>", "message": "<text>", "keys": ["..."] } }
 ```
 
-An error can also carry `"keys": [...]`, the secret keys it's about (e.g. the missing keys of a batch read).
+`error.keys` appears only when an error is about specific keys (a batch's missing keys).
 
 ### Authentication
 
-Every route except `/v0/health`, `/v0/ready` and `/v0/bootstrap/lighthouse` needs:
+`Authorization: Bearer <token>` on every route except `/v0/health`, `/v0/ready` and `/v0/bootstrap/lighthouse`. The token is the **master token** (full access) or a **project token** (its patterns only).
 
-```
-Authorization: Bearer <token>
-```
-
-The token is either the **master token** (`COVE_CLIENT_SECRET`), with full read/write access to every secret, or a **project token**, limited to the keys it was given (next section).
-
-The middleware (`middleware.go`) checks these in order:
-
-| Condition | Status | `error.type` |
-|---|---|---|
-| Header missing | 401 | `missing_token` |
-| Not in the form `Bearer <token>` (case-sensitive `Bearer`) | 401 | `invalid_token_format` |
-| The master token (constant-time compare) | — | accepted, full access |
-| A project token (looked up by its SHA-256 hash) | — | accepted, limited access |
-| The token store can't be reached | 503 | `auth_unavailable` (not 401, so a client doesn't conclude its token is wrong) |
-| Neither | 401 | `invalid_token` |
-
-**Rate limit on failures.** An address that fails 10 times within a minute (missing, malformed or wrong tokens, and refused bootstrap requests) is refused for 5 minutes: `429 too_many_requests` with a `Retry-After` header, and a `rate limit:` line in the server log. Requests with a valid token never count, so busy clients are unaffected, and a token check that fails because the database is down (`503`) doesn't count either. The counts live in memory and reset when Cove restarts. (Behind a reverse proxy, every client would share the proxy's address; Cove doesn't publish a port, so this doesn't apply today.)
+| Situation | Answer |
+|---|---|
+| No header / not `Bearer <token>` | `401 missing_token` / `401 invalid_token_format` |
+| Master token (constant-time compare) | full access; `X-Cove-Source` required on secret routes |
+| Project token (looked up by hash) | access per its patterns; recorded under its name |
+| Token store unreachable | `503 auth_unavailable` (not 401, so a client doesn't discard a good token) |
+| Anything else | `401 invalid_token` |
+| 10 failed attempts in a minute from an address | `429 too_many_requests` with `Retry-After`, for 5 minutes |
 
 ### Project tokens
 
-Each project can have its own token instead of sharing the master token. Create them in the CLI:
+Created in the CLI (`token create`, [§11](#11-cli)). A **pattern** is an exact key, a prefix ending in `*` (`MARQUEE_*`), or `*`; keys are case-sensitive.
+- `--allow` patterns can be read; `--write` patterns can also be created, updated and deleted.
+- Nothing is reachable unless a pattern covers it.
+- `GET /v0/secrets` lists only readable keys; a key outside the token's access is `403 forbidden_key`, whether or not it exists.
 
+Tokens are `cove_` + 43 random characters; only their SHA-256 hash is stored, so a token is shown once (on `create` or `rotate`) and can't be recovered.
+
+### Routes
+
+| Method | Path | Auth | Purpose |
+|---|---|---|---|
+| GET | `/v0/health` | – | The HTTP server is up |
+| GET | `/v0/ready` | – | The database is reachable (the Docker healthcheck) |
+| GET | `/v0/bootstrap/lighthouse` | – | One-time token handout ([§10](#10-bootstrap)) |
+| GET | `/v0/auth` | ✓ | Is this token valid? |
+| GET | `/v0/version` | ✓ | The running version |
+| GET | `/v0/secrets` | ✓ | List secrets (metadata only) |
+| GET | `/v0/secrets/{key}` | ✓ | Read a value (counts as a read) |
+| POST | `/v0/secrets/{key}` | ✓ | Create, body `{"value": "..."}` → `201` |
+| PATCH | `/v0/secrets/{key}` | ✓ | Update, body `{"value": "..."}` |
+| DELETE | `/v0/secrets/{key}` | ✓ | Delete (restorable) |
+| POST | `/v0/batch` | ✓ | Read several secrets at once, body `{"keys": [...]}` |
+
+On `/v0/secrets/{key}`, checks run in this order: key present and valid (`400 missing_key` / `invalid_key`), project-token access (`403 forbidden_key`), `X-Cove-Source` for the master token (`400 missing_source`), method (`405`). Bodies are at most 64 KB (`400 invalid_body`).
+
+### Responses
+
+```jsonc
+// GET /v0/secrets
+{ "secrets": [ { "key": "MARQUEE_DATABASE_URL", "version": 3, "times_pulled": 12,
+                 "created_at": "2026-01-01T00:00:00Z", "updated_at": "2026-04-10T08:30:00Z" } ] }
+// GET /v0/secrets/{key}
+{ "key": "MARQUEE_DATABASE_URL", "value": "postgres://...", "version": 3 }
+// POST / PATCH / DELETE /v0/secrets/{key}
+{ "key": "MARQUEE_DATABASE_URL", "action": "created", "message": "MARQUEE_DATABASE_URL has been created." }
+// POST /v0/batch
+{ "secrets": [ { "key": "...", "value": "...", "version": 1 }, ... ] }
+// /v0/health, /v0/ready, /v0/auth, /v0/version
+{ "healthy": true, "time": "..." }   { "ready": true, "time": "..." }   { "authenticated": true, "time": "..." }   { "version": "v1.0.0" }
 ```
-cove> token create marquee  --allow 'MARQUEE_*'  --allow SHARED_DISCORD_WEBHOOK_URL
-cove> token create botsuite   --allow 'BOTSUITE_*'   --allow SHARED_TMDB_API_KEY --write BOTSUITE_TWITCH_ACCESS_TOKEN
+
+**Batch reads** (`POST /v0/batch`, 1–100 keys) are **all or nothing**: secrets come back in the order asked for, each counted as a read, in one transaction. If the token can't read one key, the whole request is `403 forbidden_key` without saying which (the server log names them). That check comes before the existence check, so a batch can't reveal whether another project's key exists. If keys are missing, it's `404 not_found` naming every missing key in `error.keys`. If anything fails, nothing is read. CoveClient's `GetSecrets` uses it.
+
+### Error types
+
+| `type` | Status | Meaning |
+|---|---|---|
+| `missing_token`, `invalid_token_format`, `invalid_token` | 401 | see Authentication |
+| `missing_key`, `invalid_key`, `missing_source`, `invalid_body` | 400 | bad request |
+| `forbidden_key` | 403 | the project token doesn't cover the key |
+| `bootstrap_locked`, `bootstrap_expired`, `bootstrap_forbidden` | 403 | bootstrap refused ([§10](#10-bootstrap)) |
+| `not_found` | 404 | no such secret (or route); batch: `error.keys` lists them |
+| `method_not_allowed` | 405 | wrong method |
+| `already_exists` | 409 | creating a key that exists |
+| `too_many_requests` | 429 | rate-limited; see `Retry-After` |
+| `decrypt_error` | 500 | a stored value can't be decrypted |
+| `wrong_key` | 500 | the vault key was rotated while this Cove was running: restart it |
+| `get_all`, `read_error`, `create_error`, `update_error`, `delete_error`, `server_error`, `marker_error` | 500 | database or bootstrap-state failure (details in the server log) |
+| `not_ready`, `auth_unavailable` | 503 | the database is unreachable |
+
+### Example
+
+```bash
+# from a container on the spark network
+TOKEN=cove_...    # a project token
+curl -H "Authorization: Bearer $TOKEN" http://cove:2100/v0/secrets/MARQUEE_DATABASE_URL
+curl -H "Authorization: Bearer $TOKEN" -d '{"keys":["MARQUEE_DATABASE_URL","SHARED_TMDB_API_KEY"]}' http://cove:2100/v0/batch
 ```
 
-- **Patterns:** an exact key (`SHARED_TMDB_API_KEY`), a prefix ending in `*` (`LIGHTHOUSE_*`), or `*` for every key. Keys are case-sensitive.
-- **Read vs write:** `--allow` patterns can be read. `--write` patterns can also be created, updated and deleted.
-- **Nothing is reachable unless a pattern covers it.** A key named `SHARED_*` isn't special; share it by adding it to each token that needs it (`token allow SHARED_OPENAI_API_KEY botsuite marquee`).
-- **What a project token changes in the API:**
-  - `GET /v0/secrets/{key}` needs a read (or write) pattern covering the key, and `POST`/`PATCH`/`DELETE` a write pattern. Otherwise the answer is `403 forbidden_key`, e.g. `marquee's token can't read BOTSUITE_DATABASE_URL`. The answer is the same whether or not the key exists, so a project can't probe for other projects' keys.
-  - `GET /v0/secrets` lists only the keys the token can read.
-  - The event log records the token's name as the source. `X-Cove-Source` isn't needed and is ignored, so the log can't be spoofed.
-- **The master token is unchanged** and keeps full access, so projects can move to their own tokens one at a time.
+---
 
-See [Connecting a project](#connecting-a-project-the-standard) for how projects are expected to use Cove, and [§11](#moving-a-project-to-the-standard) for moving an existing project over.
+## 9. Connecting a project (the standard)
 
-### Connecting a project (the standard)
+Every project gets its secrets the same way.
 
-Every project gets its secrets the same way, so there's one thing to remember and one thing to check.
-
-**Default: Lighthouse injects the values at deploy time.** The project's `docker-compose.yml` refers to each secret it needs as `${KEY}`, where `KEY` is the secret's name in Cove:
+**Default: Lighthouse injects them at deploy time.** The project's `docker-compose.yml` refers to each secret by its Cove name as `${KEY}`:
 
 ```yaml
 environment:
@@ -336,351 +415,153 @@ environment:
   - TMDB_API_KEY=${SHARED_TMDB_API_KEY}
 ```
 
-When it deploys, Lighthouse finds every `${...}` name in the file (its parser: `\$\{([^}:]+)(?::[^}]*)?\}`), fetches those secrets from Cove, and runs `docker compose up` with `MARQUEE_DATABASE_URL=<value>` and so on in its environment; Compose then fills in the file. So a key used this way must also be a valid Compose variable name, which the [naming standard](#key-naming-standard) guarantees.
+Lighthouse finds every `${...}` (its regex: `\$\{([^}:]+)(?::[^}]*)?\}`), fetches those secrets from Cove (best as one `GetSecrets` batch: one request, all or nothing), and runs `docker compose up` with `MARQUEE_DATABASE_URL=<value>` etc. in its environment; Compose fills in the file. The project just reads environment variables: **no Cove code, address or token**. Off-the-shelf images work the same way.
 
-The project just reads environment variables (`os.Getenv("DATABASE_URL")`). It has **no Cove code, no Cove address and no Cove token**. Off-the-shelf images (ones you didn't write) work the same way.
-
-**Exception: a project that changes secrets itself** (today: botsuite, refreshing its Twitch tokens) also gets its own token, allowed to write only the keys it updates:
+**Exception: a project that changes secrets itself** (today botsuite, refreshing Twitch tokens) also gets its own token, with `--write` only on the keys it updates:
 
 ```
-cove> token create botsuite --allow 'BOTSUITE_*' --write BOTSUITE_TWITCH_ACCESS_TOKEN
+cove> token create botsuite --allow 'BOTSUITE_*' --write BOTSUITE_TWITCH_ACCESS_TOKEN --write BOTSUITE_TWITCH_REFRESH_TOKEN
 cove> create BOTSUITE_COVE_TOKEN <the printed token>
 ```
-
 ```yaml
 environment:
   - COVE_URL=http://cove:2100
   - COVE_TOKEN=${BOTSUITE_COVE_TOKEN}
 ```
 
-The project uses CoveClient with those two values (`coveclient.New(os.Getenv("COVE_URL"), os.Getenv("COVE_TOKEN"), "botsuite")`). It can also read its own keys that way, or have them injected like any other project.
+The project uses CoveClient: `coveclient.New(os.Getenv("COVE_URL"), os.Getenv("COVE_TOKEN"), "botsuite")`.
 
-**Lighthouse** has its own read-only token over everything (`token create lighthouse --allow '*'`): it can read any secret to deploy it, but can't change or delete one. It gets that token with `bootstrap open lighthouse` and CoveClient's `LoadOrBootstrap`.
+**Lighthouse** has a read-only token over everything (`token create lighthouse --allow '*'`), fetched with `bootstrap open lighthouse` and CoveClient's `LoadOrBootstrap`. **No project gets the master token.**
 
-**The master token (`COVE_CLIENT_SECRET`) is given to no project.** Keep it for emergencies.
+**Why injection is the default:** on a single server, anyone who can see a container's environment can get inside it, so handing a project a token instead of values protects nothing extra. Injection needs no Cove code, works for any language or image, and lets a project restart while Cove is down. After changing a value, redeploy the projects that use it (`info KEY` shows who can read it).
 
-#### Key naming standard
+### Key naming standard
 
-Every key is **`PROJECT_PLATFORM_TYPE`**, in capitals, digits and underscores only, e.g. `BOTSUITE_TWITCH_CLIENT_ID`:
+Every key is **`PROJECT_PLATFORM_TYPE`**: capitals, digits and `_` only.
 
-| Part | What it is | Examples |
+| Part | Meaning | Examples |
 |---|---|---|
-| `PROJECT` | the project that owns it, or `SHARED` for one used by several | `BOTSUITE`, `MARQUEE`, `LIGHTHOUSE`, `SHARED` |
-| `PLATFORM` | the service it's for | `TWITCH`, `NETFLIX`, `TMDB`, `GITHUB`, `DISCORD`, `DATABASE`, `COVE` |
-| `TYPE` | what kind of value, from the fixed list below | `API_KEY`, `CLIENT_ID` |
+| `PROJECT` | the owner; `SHARED` for keys several projects use | `BOTSUITE`, `MARQUEE`, `LIGHTHOUSE`, `PLOP`, `SHARED` |
+| `PLATFORM` | the service | `TWITCH`, `NETFLIX`, `TMDB`, `GITHUB`, `DISCORD`, `DATABASE`, `COVE` |
+| `TYPE` | the kind of value, from this list | see below |
 
 | `TYPE` | For | Example |
 |---|---|---|
-| `API_KEY` | a single key a service issues | `BOTSUITE_NETFLIX_API_KEY` |
+| `API_KEY` | a key a service issues | `BOTSUITE_NETFLIX_API_KEY` |
 | `CLIENT_ID` / `CLIENT_SECRET` | OAuth app credentials | `BOTSUITE_TWITCH_CLIENT_SECRET` |
-| `ACCESS_TOKEN` / `REFRESH_TOKEN` | OAuth tokens (the ones a project may write back) | `BOTSUITE_TWITCH_ACCESS_TOKEN` |
-| `TOKEN` | any other bearer token | `LIGHTHOUSE_GITHUB_TOKEN`, `BOTSUITE_COVE_TOKEN` |
-| `URL` | connection strings and webhooks | `MARQUEE_DATABASE_URL`, `SHARED_DISCORD_WEBHOOK_URL` |
+| `ACCESS_TOKEN` / `REFRESH_TOKEN` | OAuth tokens | `BOTSUITE_TWITCH_ACCESS_TOKEN` |
+| `TOKEN` | other bearer tokens | `LIGHTHOUSE_GITHUB_TOKEN`, `BOTSUITE_COVE_TOKEN` |
+| `URL` | connection strings, webhooks | `MARQUEE_DATABASE_URL`, `SHARED_DISCORD_WEBHOOK_URL` |
 | `PASSWORD` | passwords | `PLOP_SMTP_PASSWORD` |
-| `SECRET` | a random value the project uses itself (signing, sessions) | `MARQUEE_SESSION_SECRET` |
+| `SECRET` | random values a project uses itself | `MARQUEE_SESSION_SECRET` |
 
-Why: the names must work as `${...}` Compose variables (letters, digits, `_`; no `.` or `-`); the `PROJECT_` prefix gives each project token one pattern (`--allow 'BOTSUITE_*'`, and the `_` keeps `BOT_*` from matching `BOTSUITE_...`); and `list BOTSUITE_` or `search TWITCH` find things at a glance. The CLI warns when `create` or `rename` uses a name with other characters. `COVE_URL` isn't a secret: write `http://cove:2100` in the compose file directly.
-
-Why injection is the default: on a single server, anyone who can see a container's environment can also get inside it, so passing a token instead of values protects nothing extra; injection needs no Cove code in the project, works for any language or image, and lets a project restart even while Cove is down. After changing a secret's value, redeploy the projects that use it (`info <key>` shows who reads it). A token is only worth its extra moving parts when the project must write.
-
-### Routes
-
-| Method | Path | Auth | `X-Cove-Source` | Purpose |
-|---|---|---|---|---|
-| GET | `/v0/health` | no | no | Liveness: the HTTP server is up |
-| GET | `/v0/ready` | no | no | Readiness: the database is reachable |
-| GET | `/v0/version` | yes | no | The running Cove version |
-| GET | `/v0/bootstrap/lighthouse` | no | no | Token handout while opened with `bootstrap open` ([§7](#7-bootstrap-flow)) |
-| GET | `/v0/auth` | yes | no | Checks that the token is valid |
-| GET | `/v0/secrets` | yes | no | List metadata for all secrets (a project token sees only its keys) |
-| GET | `/v0/secrets/{key}` | yes | master token only | Read (decrypted) value |
-| POST | `/v0/secrets/{key}` | yes | master token only | Create |
-| PATCH | `/v0/secrets/{key}` | yes | master token only | Update |
-| DELETE | `/v0/secrets/{key}` | yes | master token only | Delete |
-| POST | `/v0/batch` | yes | master token only | Read several secrets in one request (all or nothing) |
-
-### Checks on `/v0/secrets/{key}`
-
-In `handleSecretID`, these run in order after auth:
-
-| Check | Status | `error.type` |
-|---|---|---|
-| Empty key (`/v0/secrets/`) | 400 | `missing_key` |
-| Key longer than 256 bytes, or has a character outside `[A-Za-z0-9._-]` (so no `/`) | 400 | `invalid_key` |
-| Project token doesn't cover the key (read for GET, write otherwise) | 403 | `forbidden_key` |
-| Master token and `X-Cove-Source` missing | 400 | `missing_source` |
-| Method not GET/POST/PATCH/DELETE | 405 | `method_not_allowed` |
-
-Request bodies (POST/PATCH) can be at most **64 KB** (`maxBodyBytes`). Anything larger, or invalid JSON, returns `400 invalid_body`. A body missing `value` is accepted and stores an empty string.
-
-### Endpoints
-
-**`GET /v0/health`**
-```json
-{ "success": true, "data": { "healthy": true, "time": "2026-05-15T12:00:00Z" } }
-```
-This only shows that the HTTP server is up. It doesn't check the database; use `/v0/ready` for that.
-
-**`GET /v0/ready`**: pings the database (2-second limit).
-```json
-{ "success": true, "data": { "ready": true, "time": "2026-05-15T12:00:00Z" } }
-```
-Returns `503 not_ready` when the database is unreachable. The Docker healthcheck uses this.
-
-**`GET /v0/version`**: requires auth.
-```json
-{ "success": true, "data": { "version": "v1.0.0" } }
-```
-
-**`GET /v0/auth`**
-```json
-{ "success": true, "data": { "authenticated": true, "time": "2026-05-15T12:00:00Z" } }
-```
-
-**`GET /v0/secrets`**: metadata only, sorted by key. Values are never returned.
-```json
-{
-  "success": true,
-  "data": {
-    "secrets": [
-      { "key": "my-api-key", "version": 3, "times_pulled": 12,
-        "created_at": "2026-01-01T00:00:00Z", "updated_at": "2026-04-10T08:30:00Z" }
-    ]
-  }
-}
-```
-If the vault is empty (or a project token can read none of it), `secrets` is `[]`. A DB error returns `500 get_all`.
-
-**`GET /v0/secrets/{key}`**: adds 1 to `times_pulled` (`read_count` in the database) and logs a `read` event.
-```json
-{ "success": true, "data": { "key": "my-api-key", "value": "abc123", "version": 3 } }
-```
-A missing key returns `404 not_found`. A value that can't be decrypted (usually a changed `VAULT_ENCRYPTION_KEY`) returns `500 decrypt_error`, and a database error `500 read_error`.
-
-**`POST /v0/secrets/{key}`** with body `{ "value": "..." }` returns `201`:
-```json
-{ "success": true, "data": { "key": "my-api-key", "action": "created", "message": "my-api-key has been created." } }
-```
-A key that already exists returns `409 already_exists`; other failures `500 create_error`.
-
-**`PATCH /v0/secrets/{key}`** with body `{ "value": "..." }` returns `200` with `"action": "updated"`. A key that doesn't exist returns `404 not_found`; other failures `500 update_error`.
-
-**`DELETE /v0/secrets/{key}`** returns `200` with `"action": "deleted"`. A missing key returns `404 not_found`; other failures `500 delete_error`.
-
-**`POST /v0/batch`** with body `{ "keys": ["MARQUEE_DATABASE_URL", "SHARED_TMDB_API_KEY"] }` (1–100 keys) returns `200`:
-```json
-{ "success": true, "data": { "secrets": [
-    { "key": "MARQUEE_DATABASE_URL", "value": "postgres://...", "version": 2 },
-    { "key": "SHARED_TMDB_API_KEY", "value": "...", "version": 1 } ] } }
-```
-Secrets come back in the order asked for, duplicates once. Each counts as a read and gets a `read` event, all in one transaction. It's **all or nothing**, checked in this order:
-
-1. The body must list 1–100 valid keys: otherwise `400 invalid_body` / `invalid_key`.
-2. A project token must be able to read **every** key: otherwise `403 forbidden_key`, **without saying which**. The server log names them (`docker logs cove`), so you can fix the access. This check comes before the existence check, so a batch can't reveal whether another project's key exists.
-3. Every key must exist: otherwise `404 not_found`, naming **every** missing key in the message and in `error.keys`, e.g. `"keys": ["MARQUEE_TWITCH_CLIENT_ID", "MARQUEE_TWITCH_CLIENT_SECRET"]`.
-4. If a value can't be decrypted: `500 decrypt_error`.
-
-If any check fails, nothing is read or counted. With the master token, `X-Cove-Source` is required, as for a single read. CoveClient's `GetSecrets(keys...)` uses this endpoint (and falls back to one request per key on an older Cove).
-
-Before v1.0.0, every read/delete failure was `404` and every create/update failure `500`. CoveClient only checks the success codes, so the more precise errors don't affect it.
-
-### Error type reference
-
-| `type` | Status | Where |
-|---|---|---|
-| `missing_token`, `invalid_token_format`, `invalid_token` | 401 | auth middleware |
-| `missing_key`, `invalid_key`, `missing_source`, `invalid_body` | 400 | secret routes |
-| `not_found` | 404 | unknown `/v0/secrets*` path; missing key on GET, PATCH or DELETE; missing keys in a batch (listed in `error.keys`) |
-| `already_exists` | 409 | POST for a key that exists |
-| `forbidden_key` | 403 | a project token that doesn't cover the key |
-| `method_not_allowed` | 405 | wrong method |
-| `bootstrap_locked`, `bootstrap_expired`, `bootstrap_forbidden` | 403 | bootstrap endpoint closed / window ran out / address not allowed ([§7](#7-bootstrap-flow)) |
-| `decrypt_error` | 500 | the stored value can't be decrypted |
-| `get_all`, `read_error`, `create_error`, `update_error`, `delete_error`, `server_error`, `marker_error` | 500 | database / config / bootstrap state failures |
-| `too_many_requests` | 429 | too many failed attempts from this address; see `Retry-After` |
-| `wrong_key` | 500 | Cove's `VAULT_ENCRYPTION_KEY` isn't the vault's key: it was rotated while Cove was running (restart it with the new key) |
-| `not_ready` | 503 | `/v0/ready` when the database is unreachable |
-| `auth_unavailable` | 503 | a project token couldn't be checked (database unreachable) |
-
-### curl examples
-
-```bash
-COVE=http://localhost:2110
-TOKEN=...   # COVE_CLIENT_SECRET
-
-curl $COVE/v0/health
-curl -H "Authorization: Bearer $TOKEN" $COVE/v0/secrets
-curl -H "Authorization: Bearer $TOKEN" -H "X-Cove-Source: curl" $COVE/v0/secrets/my-key
-curl -X POST  -H "Authorization: Bearer $TOKEN" -H "X-Cove-Source: curl" -d '{"value":"s3cret"}' $COVE/v0/secrets/my-key
-curl -X PATCH -H "Authorization: Bearer $TOKEN" -H "X-Cove-Source: curl" -d '{"value":"n3w"}'    $COVE/v0/secrets/my-key
-curl -X DELETE -H "Authorization: Bearer $TOKEN" -H "X-Cove-Source: curl" $COVE/v0/secrets/my-key
-```
+Why: `${...}` names must be letters, digits and `_` (Compose rejects `.` and `-`); the `PROJECT_` prefix gives each token one pattern (`BOTSUITE_*`; the `_` stops `BOT_*` matching `BOTSUITE_...`); and `list BOTSUITE_` / `search TWITCH` find things at a glance. The CLI warns on `create`, `generate` or `rename` of a non-standard name. `COVE_URL` isn't a secret: write it in the compose file.
 
 ---
 
-## 7. Bootstrap flow
+## 10. Bootstrap
 
-The bootstrap endpoint gives a new client (e.g. Lighthouse) a token before it has any credentials: its own project token, or the master token (`COVE_CLIENT_SECRET`). Because it hands out a working token, it's **closed unless you open it**, and then only briefly.
-
-### Onboarding a client
+The bootstrap endpoint hands a new client its token before it has any credentials. It's **closed unless you open it**.
 
 ```
-cove> token create lighthouse --allow '*'   # once, if it has no token yet (read-only over everything)
-cove> bootstrap open lighthouse    # open for 10 minutes to hand out lighthouse's token (or e.g. `bootstrap open lighthouse 30m`)
-        (start the client; it fetches the token once and saves it)
-cove> bootstrap status             # check it worked: shows the last handout and recent attempts
+cove> token create lighthouse --allow '*'   # once
+cove> bootstrap open lighthouse             # open for 10 minutes (or: bootstrap open lighthouse 30m)
+        start Lighthouse: LoadOrBootstrap(<token file>) fetches the token once and saves it
+cove> bootstrap status                      # shows the handout and recent attempts
 ```
 
-Only a hash of each project token is stored, so `bootstrap open <project>` gives the project a **new** token to hand out; its previous token stops working. Plain `bootstrap open` hands out the master token, as before.
+Only a hash of each project token is stored, so `bootstrap open <project>` gives the project a **new** token (its previous one stops working). Plain `bootstrap open` hands out the master token.
 
-With CoveClient, the client side is one call on every start: `LoadOrBootstrap(path)` reads the saved token, or fetches and saves it when there's none yet.
-
-### Rules
-
-`GET /v0/bootstrap/lighthouse` answers:
-
-| Situation | Response |
+| Situation | `GET /v0/bootstrap/lighthouse` |
 |---|---|
-| The endpoint is open (within its window) | `200 { "secret": "..." }`, and the endpoint **closes** |
-| The same address asks again within **2 minutes** of a handout (e.g. it crashed before saving the token) | `200` again (`redelivered`) |
-| Closed (never opened, already used, or `bootstrap lock`) | `403 bootstrap_locked` |
-| Opened, but the window ran out before anyone used it | `403 bootstrap_expired` |
-| `COVE_BOOTSTRAP_ALLOWED_CIDRS` is set and the address isn't in it | `403 bootstrap_forbidden` (doesn't use up the window) |
-| The state file can't be read or saved | `500 marker_error` |
+| Open | `200 {"secret": "..."}`, and it **closes** |
+| Same address again within 2 minutes (it crashed before saving) | `200` again |
+| Closed (never opened, used, or `bootstrap lock`) | `403 bootstrap_locked` |
+| The window ran out unused | `403 bootstrap_expired` |
+| Address outside `COVE_BOOTSTRAP_ALLOWED_CIDRS` | `403 bootstrap_forbidden` (doesn't use up the window) |
+| State file unreadable | `500 marker_error` |
 
-- **Closed by default:** a fresh install never starts with the endpoint open.
-- **Allowed networks (optional):** set `COVE_BOOTSTRAP_ALLOWED_CIDRS`, e.g. `172.18.0.0/16` for the Docker network. The caller's address comes from the connection itself, never from headers like `X-Forwarded-For`.
-- **Every attempt is recorded** in `cove.bootstrap_log` (time, address, outcome) and in the server log. `bootstrap status` shows the last 5.
-- **Refusals count toward the rate limit:** 10 within a minute block the address for 5 minutes (`429`), even if the endpoint is opened meanwhile.
-- **CLI:** `bootstrap open [project] [duration]` (1m–24h), `bootstrap lock` (close now, including any grace period), `bootstrap status` (or just `bootstrap`; also shows which token it hands out).
-
-### State
-
-The state lives in `<APP_MARKER_PATH>/bootstrap.json` (default `/app/vault/markers/bootstrap.json`, bind-mounted in Docker so it survives restarts): when the open window ends, the last handout (time and address), and, for `bootstrap open <project>`, the project's new token. That token is kept only while someone can still receive it: it's removed once the window and grace period are over, on `bootstrap lock`, or when the endpoint is opened again. The file is written atomically, readable only by its owner. A missing file means closed; a corrupt one fails closed. The v0.2.0 marker file, `bootstrap_completed`, is ignored and removed on the next `open` or `lock`.
+- The address comes from the connection, never from headers.
+- Every attempt is recorded in `bootstrap_log`; refusals count toward the rate limit.
+- **State** is `<APP_MARKER_PATH>/bootstrap.json` (owner-only, written atomically): the window, the last handout, and while it can still be handed out, a project's new token, which is removed once the window and grace period are over, on `lock`, or when reopened. A missing file means closed; a corrupt one fails closed. The v0.2.0 marker file `bootstrap_completed` is removed on the next `open` or `lock`.
 
 ---
 
-## 8. CLI
+## 11. CLI
 
-The CLI works directly on the vault (not through the HTTP API), and everything it does is logged with source `cove_cli`. There are three ways to run it:
+The CLI works on the vault directly (not through the API); everything it does is recorded as `cove_cli`.
 
-| Invocation | What it does |
+| Run as | What it is |
 |---|---|
-| `cove shell` | Interactive prompt, e.g. `docker exec -it cove /cove shell`. On a terminal it has line editing, up/down history, and Tab completion of commands and secret keys. `exit`, Ctrl+D or Ctrl+C leave the shell; the server keeps running. |
-| `cove <command> [args]` | Runs one command and exits: `0` on success, `1` on failure. E.g. `docker exec cove /cove list MYAPP_`. |
-| `cove` (no arguments) | The server with the prompt on stdin, as in v0.2.0, for running Cove directly in a terminal. Here `exit` stops the whole server. No line editing. The Docker image runs `cove serve` instead. |
-
-Shell and one-shot mode use the server's `.env` but never generate secrets or run migrations (that's the server's job).
-
-The prompt shows the environment from `APP_ENV`: `cove (dev)>`, and `cove (prod)>` in red.
+| `docker exec -it cove /cove shell` | The prompt, `cove (prod)>`, with line editing, history and Tab completion. `exit` / Ctrl+D leave it. |
+| `docker exec cove /cove <command>` | One command; exit status 0 or 1. |
+| `cove help` | Help, even without a database. |
+| `cove` (no arguments) | Server plus prompt on stdin, for running locally in a terminal (`exit` stops the server). |
+| `cove migrate [status\|up]`, `cove rotate-key`, `cove version` | Admin modes. |
 
 ### Commands
 
-| Command | Alias | Usage | Notes |
-|---|---|---|---|
-| `get` | `g` | `get <key>` | Prints only the value, so `value=$(cove get KEY)` works. Logged as a read, but **doesn't** add to `read_count` (that counts app reads). |
-| `create` | `c` | `create <key> <value>` | Refuses keys the API can't read. |
-| `update` | `u` | `update <key> <value>` | Reports the new version. |
-| `generate` | | `generate <key> [length] [--yes]` | Random value (letters and digits, 32 by default, 16–256), printed once. Asks before replacing an existing value. |
-| `delete` | `d` | `delete <key> [--yes]` | Asks for confirmation unless `--yes`. With no way to answer (e.g. `docker exec` without `-it`) it fails and suggests `--yes`. Warns which project tokens list the key (they keep it, so a restore makes it reachable again). |
-| `rename` | | `rename <key> <new-key> [--yes]` | Keeps the value, version and read count. Logged under both keys. If project tokens list the key by name, it asks to update them too (`--yes` does it without asking). |
-| `restore` | | `restore <key> [version] [--yes]` | Brings back the previous value, a specific version, or a deleted secret's last value. Saved as a new version, so nothing is lost. |
-| `list` | `l` | `list [prefix]` | Table of keys (optionally starting with `prefix`): version, reads, created, updated, and a count. Never shows values. |
-| `search` | `s` | `search <text>` | Keys containing `text` (not case-sensitive). |
-| `info` | `i` | `info <key>` | Version, app reads, when and by whom it was last read, created and updated times, and which project tokens can read it. For a deleted key, says when and by whom it was deleted. |
-| `history` | | `history <key> [count]` | The last `count` events (default 20): when, what, version, source, detail. Works for deleted keys. |
-| `status` | | `status` | Version, environment, database, schema version, number of secrets, vault key (OK with fingerprint and last rotation, or WRONG), bootstrap state. Non-zero exit when something needs attention. |
-| `bootstrap` | `b` | `bootstrap open [project] [duration]` / `lock` / `status` | Opens the bootstrap endpoint for 10 minutes (or the given duration) to hand out a project's new token or the master token, closes it, or shows its state and recent attempts ([§7](#7-bootstrap-flow)). |
-| `token` | `t` | `token [list]` / `create <name> [--allow <p>]... [--write <p>]...` / `show <name>` / `allow <p> <name>... [--write]` / `deny <p> <name>...` / `rotate <name> [--yes]` / `revoke <name> [--yes]` | Per-project tokens ([§6](#project-tokens)). `create` and `rotate` print the token once, on stdout. Patterns that match no secret get a warning (usually a typo); `deny` warns if a wildcard still covers the key. |
-| `help` | `h` | `help [command]` / `help setup` / `help patterns` | A short grouped overview; one command in detail with examples; or a step-by-step guide to setting up a project, or to token patterns. Works without a database (`cove help`). |
-| `exit` | `quit` | `exit` | Leaves the shell (or stops the server in plain `cove`). |
+`help` lists them grouped; `help <command>` shows every form with examples; `help setup` and `help patterns` are step-by-step guides.
 
-After `create` or `generate`, the CLI says which project tokens can read the new secret, or gives the `token allow` command if none can (only once project tokens exist).
+| Command | Usage | Notes |
+|---|---|---|
+| `get`, `g` | `get <key>` | Prints only the value. Logged, but not counted as an app read. |
+| `create`, `c` | `create <key> <value>` | Says which tokens can read the new secret, or how to grant access. |
+| `update`, `u` | `update <key> <value>` | New version. |
+| `generate` | `generate <key> [length] [--yes]` | Random letters and digits (32, or 16–256), printed once. Asks before replacing. |
+| `delete`, `d` | `delete <key> [--yes]` | Asks first; warns which tokens list the key. Restorable. |
+| `rename` | `rename <key> <new-key> [--yes]` | Keeps value, version and history (restore still finds pre-rename versions). Offers to update tokens that list the key. |
+| `restore` | `restore <key> [version] [--yes]` | Previous value, a version, or a deleted secret; saved as a new version. |
+| `list`, `l` | `list [prefix]` | Keys, versions, reads, dates; never values. |
+| `search`, `s` | `search <text>` | Keys containing the text. |
+| `info`, `i` | `info <key>` | Details, last read, and which tokens can read it. |
+| `history` | `history <key> [count]` | Recent events (20): what, version, who. |
+| `status` | `status` | Version, database, schema, secrets, vault key, bootstrap. Non-zero exit on problems. |
+| `token`, `t` | `list` / `create <name> [--allow p]... [--write p]...` / `show` / `allow <p> <name>... [--write]` / `deny <p> <name>...` / `rotate <name>` / `revoke <name>` | Project tokens. `create`/`rotate` print the token once, on stdout. Warns about patterns matching nothing and wildcards still covering a denied key. |
+| `bootstrap`, `b` | `open [project] [duration]` / `lock` / `status` | [§10](#10-bootstrap). |
+| `help`, `h` / `exit` | | |
 
-Keys and values are split on whitespace, so they can't contain spaces from the CLI; use the API for those.
-
-### Output
-
-Following the [clig.dev](https://clig.dev) conventions:
-
-- **Data goes to stdout, uncolored:** values, tables, help. Scripts can capture it.
-- **Messages go to stderr,** marked with a symbol so the meaning doesn't depend on color: `✓` success, `!` warning or wrong arguments (with the correct `Usage:`), `✗` error, `?` a question.
-- **Color only on a terminal,** and never when `NO_COLOR` is set, so `docker logs` and scripts get plain text.
+Output follows [clig.dev](https://clig.dev): data on stdout (so `$(cove get KEY)` works); messages on stderr marked `✓` `!` `✗` `?`; color only on a terminal and never with `NO_COLOR`. Arguments are split on spaces, so values with spaces need the API.
 
 ---
 
-## 9. Running locally
+## 12. Running locally
 
-Prerequisites: Go 1.25.1+ and a PostgreSQL instance with the schema from [§4](#4-database).
-
-```bash
-cp .env.example .env
-```
-
-Edit `.env`:
-
-```env
-COVE_DATABASE_URL=postgres://cove_app:pass@localhost:5432/cove_db
-COVE_MIGRATE_DATABASE_URL=postgres://cove_migrator:pass@localhost:5432/cove_db
-COVE_CLIENT_SECRET=           # empty = generate
-VAULT_ENCRYPTION_KEY=         # empty = generate
-APP_ENV=DEV
-APP_PORT=2110
-APP_ENV_PATH=.env
-APP_MARKER_PATH=./markers
-```
+Needs **Go 1.27** and a Postgres with the roles from [§5](#roles) (the dev `sparkdb-dev` container works).
 
 ```bash
-go run ./cmd/cove
-# or
-go build -o cove ./cmd/cove && ./cove
+cp .env.example .env      # set COVE_DATABASE_URL and COVE_MIGRATE_DATABASE_URL; leave the secrets empty
+go run ./cmd/cove         # server + prompt; or: go run ./cmd/cove serve, then go run ./cmd/cove shell
 ```
 
-VS Code: `.vscode/launch.json` has a debug configuration for `cmd/cove`.
+The first start generates the master token and vault key into `.env` and records the key.
 
 ---
 
-## 10. Deploying with Docker
+## 13. Deploying with Docker
 
-### Image (`Dockerfile`)
+**Image** (`Dockerfile`): Go 1.27.1 builds a static binary into `alpine:3.24`; it runs `/cove serve` as user `10001`. The `VERSION` build argument is stamped in (compose passes `COVE_VERSION`). `.dockerignore` keeps `.env`, `markers/` and `.git` out of the build.
 
-Two-stage build: `golang:1.25.1-alpine` builds a static binary, then it's copied to `/cove` in `alpine:3.24`. The working directory is `/app`. The image exposes `2100` and runs `/cove serve`. The `VERSION` build argument is stamped into the binary (compose passes `COVE_VERSION`, default `dev`).
-
-- **Cove runs as user `10001`, not root.** That user exists only inside the image; the host needs no account for it. But the bind-mounted files must be owned by it: run `chown -R 10001:10001 /srv/server/storage/cove` on the host once (see [First deploy](#first-deploy)). If you forget, Cove stops at startup with a "permission denied" message that includes the command. The binary itself stays owned by root, so Cove can't overwrite it.
-- **The base image is pinned** (`alpine:3.24`, which follows 3.24.x patch releases), so a rebuild gets the same base as before. Bump it on purpose.
-- **`.dockerignore` keeps `.env`, `markers/`, `.git` and the docs out of the build**, so no secrets end up in the build cache.
-
-### Compose (`docker-compose.yml`)
+**Compose** (`docker-compose.yml`):
 
 | Setting | Value |
 |---|---|
-| Port | **Not published.** Only containers on `spark` can reach Cove, at `http://cove:2100`; nothing on the LAN can connect. The CLI uses `docker exec`, which needs no port. |
-| Network | `spark` (external, must already exist) |
-| `.env` | `/srv/server/storage/cove/.env` → `/app/vault/.env` (**read-only**) |
-| Markers | `/srv/server/storage/cove/markers` → `/app/vault/markers` |
-| Command | `cove serve` (the image's default): API only, no TTY, so nothing typed into the CLI reaches `docker logs` |
-| Restart | `unless-stopped` |
-| Healthcheck | `wget -qO- http://localhost:2100/v0/ready` every 10s (unhealthy when the database is unreachable) |
-| Restrictions | `read_only: true` (the container's filesystem is read-only; Cove writes only to the markers mount, and `/tmp` is a tmpfs), `cap_drop: [ALL]` (no special Linux permissions; port 2100 doesn't need any), `no-new-privileges` (nothing in the container can gain more rights) |
-
-Because `.env` is mounted read-only, **the host `.env` must already contain `COVE_CLIENT_SECRET` and `VAULT_ENCRYPTION_KEY`**. If either is empty, Cove can't save a generated value, and stops with a message naming the setting and the file. Generate the values first (for example by running Cove locally once, or with `openssl rand -base64 36 | tr -dc 'A-Za-z0-9'`).
+| Network | `spark` (external); **no published port** |
+| `.env` | `/srv/server/storage/cove/.env` → `/app/vault/.env`, read-only |
+| State | `/srv/server/storage/cove/markers` → `/app/vault/markers` |
+| Restrictions | read-only filesystem (plus a `/tmp` tmpfs), all capabilities dropped, no-new-privileges |
+| Restart / health | `unless-stopped`; `/v0/ready` every 10 s |
 
 ### First deploy
 
 ```bash
-# on the server
 mkdir -p /srv/server/storage/cove/markers
-cp .env.example /srv/server/storage/cove/.env
-# edit it: COVE_DATABASE_URL, COVE_CLIENT_SECRET, VAULT_ENCRYPTION_KEY
+cp .env.example /srv/server/storage/cove/.env    # set the database URLs, COVE_CLIENT_SECRET and VAULT_ENCRYPTION_KEY (the file is read-only in the container)
 chmod 600 /srv/server/storage/cove/.env
-chown -R 10001:10001 /srv/server/storage/cove    # Cove's user in the container
-
-docker network create spark        # if it doesn't exist
+sudo chown -R 10001:10001 /srv/server/storage/cove   # Cove's user in the container; no host account needed
 COVE_VERSION=$(git describe --tags --always) docker compose up -d --build
-docker compose logs -f cove
+docker exec cove /cove status
 ```
-
-The Postgres host in `COVE_DATABASE_URL` must be reachable from inside the container. If Postgres is on the `spark` network, use its container name as the host.
 
 ### Updating
 
@@ -689,100 +570,115 @@ git pull
 COVE_VERSION=$(git describe --tags --always) docker compose up -d --build
 ```
 
-State lives in Postgres and the bind mounts, so rebuilding the container is safe.
-
-If you replace or recreate the host `.env` or `markers/` (e.g. edit `.env` with a tool that writes a new file as root), run the `chown` again.
-
-### Using the CLI in the container
-
-```bash
-docker exec -it cove /cove shell       # interactive, with Tab completion; exit leaves the shell
-docker exec cove /cove list MYAPP_     # one command
-docker exec cove /cove status          # health overview; exits non-zero if something's wrong
-```
-
-`docker exec` sessions run as the same user as Cove (`10001`), aren't recorded in `docker logs`, and `exit` or Ctrl+C only end the session. A handy alias on the server: `alias cove='docker exec -it cove /cove shell'`.
-
-There's no `docker attach` CLI any more: the container runs `cove serve` without a TTY. (Plain `cove`, with the prompt on stdin, still exists for running Cove directly in a terminal.)
+State lives in Postgres and the bind mounts, so rebuilding is safe. If an editor replaces the `.env` with a new root-owned file, run the `chown` again.
 
 ---
 
-## 11. Operations
+## 14. Operations
 
 ### Backups
 
-Back up all of these. **Without the key, the DB dump is useless.**
-
-1. PostgreSQL: `pg_dump -n cove ...`
-2. `/srv/server/storage/cove/.env` (contains `VAULT_ENCRYPTION_KEY` and `COVE_CLIENT_SECRET`)
+Back up **both**, and keep them together: a database dump without the key is useless.
+1. `docker exec sparkdb pg_dump -U <admin> -d cove_db > cove_db-$(date +%F).sql`
+2. `/srv/server/storage/cove/.env` (vault key and master token), stored off the server.
 
 ### Moving a project to the standard
 
-One project at a time ([Connecting a project](#connecting-a-project-the-standard) describes the target).
+Rename its keys to the standard in the same change as its compose file (anything asking for an old name gets "not found"; `rename` keeps history and offers to update tokens).
 
-**A project that only reads secrets:**
-1. List what it gets from Cove today: its `GetSecret`/`GetSecrets` calls, and any `${...}` placeholders already in its compose file.
-2. For each secret it fetches itself, add a line to its compose file (`NAME=${KEY}`) and read `os.Getenv("NAME")` in the code instead.
-3. Remove `COVE_CLIENT_SECRET` (and any Cove URL) from its compose/`.env`, and CoveClient from its code.
-4. Redeploy with Lighthouse. Check: it starts and works, and `history <one of its keys>` shows `lighthouse` as the reader (not the project).
-
-**A project that writes back (e.g. botsuite):**
-1. `token create <project> --allow '<PROJECT>_*' --write <each key it updates>`, then `create <PROJECT>_COVE_TOKEN <the printed token>`.
-2. `token show <project>`: check what it can reach; warnings mean a pattern matches nothing.
-3. In its compose: `COVE_URL=http://cove:2100` and `COVE_TOKEN=${<PROJECT>_COVE_TOKEN}`, replacing `COVE_CLIENT_SECRET`. In the code, CoveClient v1.0.0 with those two values.
-4. Redeploy. Check: `token list` shows a "last used" time; `history <a key it writes>` shows the project's name. If it hits `403 forbidden_key`, the message names the key: `token allow <key> <project>` (add `--write` to change it) fixes it without a restart.
-
-When no project holds the master token any more, change it (see [Rotating the master token](#rotating-the-master-token)).
+- **A project that only reads:** compose `NAME=${KEY}` per secret; code reads `os.Getenv`; remove `COVE_CLIENT_SECRET` and CoveClient; redeploy with Lighthouse. Check: `history KEY` shows `lighthouse`.
+- **A project that writes:** `token create <project> --allow '<PROJECT>_*' --write <keys it updates>`, `create <PROJECT>_COVE_TOKEN <token>`; compose `COVE_URL` + `COVE_TOKEN=${<PROJECT>_COVE_TOKEN}`; redeploy. Check: `token list` shows it used; a `403 forbidden_key` names the key to `token allow`.
 
 ### Rotating a project token
 
-`token rotate <project>` prints a new token with the same access; the old one stops working at once. Save it with `update <PROJECT>_COVE_TOKEN <new token>` and redeploy the project. For Lighthouse itself (which fetches its token with `LoadOrBootstrap`), delete its token file and use `bootstrap open lighthouse` instead. If a token may have leaked, `token revoke <project>` stops it immediately, and every shared secret it could read should be changed too (`info <key>` lists who can read a key).
+`token rotate <project>` prints a new token; the old one stops at once. Store it (`update <PROJECT>_COVE_TOKEN <token>`) and redeploy. For Lighthouse: delete its token file and `bootstrap open lighthouse`. If a token leaked: `token revoke <project>` now, then change every secret it could read (`token show <project>`).
 
 ### Rotating the vault key
 
-`cove rotate-key` re-encrypts every secret, and every value copy in the event log, with a new `VAULT_ENCRYPTION_KEY`, in **one transaction**: it either finishes completely or changes nothing. Do it if the key may have leaked, or to replace a short key. It takes a second or two; projects with injected values keep running throughout.
+`cove rotate-key` re-encrypts every secret and every history value in **one transaction**: it finishes or changes nothing.
 
-1. **Back up** the database (`pg_dump -d cove_db`) and the `.env` file, **with the old key**. Until you're sure everything works, that pair is your way back.
-2. Get a new key: `docker compose run --rm cove /cove rotate-key` prints a line to add (`VAULT_NEW_ENCRYPTION_KEY=...`) and changes nothing. Add that line to `/srv/server/storage/cove/.env`, keeping `VAULT_ENCRYPTION_KEY` as it is. The new key is now saved before anything uses it.
-3. Stop Cove: `docker compose stop cove`. (Recommended, not required: a Cove left running can't read or write until it's restarted with the new key, but it can never store anything with the old one.)
-4. Rotate: `docker compose run --rm cove /cove rotate-key`. It needs `COVE_MIGRATE_DATABASE_URL`, because only the schema owner may rewrite the event log. If any stored value can't be decrypted with the old key, it stops, names them, and changes nothing.
-5. In the `.env`: set `VAULT_ENCRYPTION_KEY` to the new value and delete the `VAULT_NEW_ENCRYPTION_KEY` line. If your editor wrote a new file, run the `chown` from [§10](#first-deploy) again.
-6. Start Cove: `docker compose up -d --force-recreate cove` (`--force-recreate` makes Docker pick up the edited file).
-7. **Check:** `docker exec cove /cove status` shows `Vault key: OK (fingerprint ..., rotated <now>)`, and `docker exec cove /cove get <a key>` works.
+1. **Back up** the database and the `.env` (with the old key): that pair is the way back.
+2. `docker compose run --rm cove /cove rotate-key` prints a `VAULT_NEW_ENCRYPTION_KEY=...` line and changes nothing. Add it to the host `.env`.
+3. `docker compose stop cove` (recommended).
+4. `docker compose run --rm cove /cove rotate-key`. It needs `COVE_MIGRATE_DATABASE_URL`; if any value can't be decrypted it names them and changes nothing.
+5. In the `.env`: `VAULT_ENCRYPTION_KEY=<new value>`; delete the `VAULT_NEW_ENCRYPTION_KEY` line.
+6. `docker compose up -d --force-recreate cove`.
+7. Check: `status` shows `Vault key: OK (..., rotated <now>)`; `get` a key.
 
-If you start Cove after step 4 but forget step 5, it refuses to start and says exactly which lines to change. **Way back** after step 4: the old key no longer opens the vault, so restore the backup from step 1 (database and `.env` together).
+Starting after step 4 but before step 5 is refused with a message saying which lines to change. After step 4 the old key no longer opens the vault; the way back is restoring step 1's backup.
 
 ### Rotating the master token
 
-1. Put a new `COVE_CLIENT_SECRET` (at least 24 characters) in the host `.env`.
-2. `docker compose restart cove`
-3. Update every client still using the master token, either by hand or by running `bootstrap open` and letting a client fetch it again (with `LoadOrBootstrap`, delete its token file first). Projects with their own tokens are unaffected.
+Set a new `COVE_CLIENT_SECRET` (24+ characters) in the `.env` and `docker compose up -d --force-recreate cove`. Projects with their own tokens are unaffected.
 
-### Recovering a deleted or overwritten secret
+### Recovering a secret
 
-`restore <key>` brings back the previous value (or a deleted secret's last value); `restore <key> <version>` brings back a specific one. `history <key>` shows the versions. The restored value is saved as a new version.
+`history KEY` shows versions; `restore KEY` brings back the previous value or a deleted secret; `restore KEY 3` a specific version. Restoring saves a new version, so nothing is lost.
 
-### Network exposure
+### Network
 
-Cove publishes no port: it's reachable only from containers on the `spark` Docker network, at `http://cove:2100`. That traffic never leaves the server, so plain HTTP is fine there, and nothing on your LAN (or beyond) can even try a token.
+Every client uses `http://cove:2100` on `spark`. For something on the host outside Docker, publish to `127.0.0.1:2100` only; from elsewhere, an SSH tunnel. Never publish on all interfaces.
 
-- **Every client uses `http://cove:2100`.** A project on another Docker network must join `spark`.
-- **Something on the server itself, outside Docker,** can be given access with `ports: ["127.0.0.1:2100:2100"]`, which only that machine can reach; from elsewhere, use an SSH tunnel (`ssh -L 2100:127.0.0.1:2100 server`).
-- **Never publish Cove on all interfaces** (`"2100:2100"`) or to the internet. If it ever has to cross a network, put it behind a TLS reverse proxy (Caddy, Nginx, Traefik) with an allowlist.
+### Entering values
 
-### Entering secret values
-
-Nothing typed at the `cove>` prompt reaches `docker logs`, and its up-arrow history is kept in memory only. A **one-shot** command is different: `docker exec cove /cove create KEY value` puts the value in your server's shell history (`~/.bash_history`). So enter values inside `docker exec -it cove /cove shell`, or use `generate` so you never type the value at all.
+The prompt isn't logged anywhere and its history is in memory only. A one-shot `docker exec cove /cove create KEY value` lands in the server's bash history, so enter values in `cove shell`, or use `generate`.
 
 ---
 
-## 12. Known issues and gotchas
+## 15. Troubleshooting
 
-These remain in the current code.
+| Symptom | Cause and fix |
+|---|---|
+| `cove: can't read /app/vault/.env: permission denied` | The host folder isn't owned by Cove's user: `sudo chown -R 10001:10001 /srv/server/storage/cove`. |
+| `cove: no .env file found` | `APP_ENV_PATH` points nowhere, or no `.env` in the working directory. |
+| `the database schema is at version N, but this version of Cove needs M` | Set `COVE_MIGRATE_DATABASE_URL`, or run `cove migrate up`. |
+| `VAULT_ENCRYPTION_KEY isn't the key this vault is encrypted with` | The `.env` has the wrong key. Restore it from the backup. |
+| `the vault was re-encrypted with VAULT_NEW_ENCRYPTION_KEY` | Finish step 5 of the rotation. |
+| `COVE_CLIENT_SECRET is too short` | Use at least 24 characters. |
+| A project gets `401 invalid_token` | Wrong or revoked token; `token list` shows tokens and last use. |
+| A project gets `403 forbidden_key` | Its token doesn't cover the key: `token allow KEY <project>` (no restart needed). For a batch, `docker logs cove` names the key. |
+| A project gets `404 not_found` | The key doesn't exist, often a rename; `search` for it. |
+| `429 too_many_requests` | Something sent 10 wrong tokens in a minute. Fix it; the block lifts within 5 minutes. |
+| `500 wrong_key` | The vault key was rotated while Cove ran: finish the rotation and recreate the container. |
+| `503 not_ready` / unhealthy container | Cove can't reach `sparkdb`. |
+| Lighthouse gets `bootstrap_locked` / `bootstrap_expired` | Run `bootstrap open lighthouse` and start it within 10 minutes. |
+| `status` says `Vault key: WRONG` | See the vault-key rows above. |
 
-> See [IMPROVEMENTS.md](IMPROVEMENTS.md) for ratings (criticality, effort, improvement), proposed fixes, and a suggested order of work.
+---
 
-1. The master token still has full access to everything, and anyone who has it can do anything. Once every project has its own token, keep the master token for emergencies only.
-2. Token management happens only in the CLI (which connects to the database directly), not through the API.
-3. `restore` only sees history recorded under the key's current name; values from before a `rename` are under the old name.
-4. Because the audit log is mandatory, a broken `event_log` table (e.g. a lost `INSERT` grant) makes reads and writes fail until it's fixed. The error message and the server log name the cause.
+## 16. Development
+
+```bash
+go vet ./... && go test ./...
+```
+
+- Unit tests use in-memory stores (`vaulttest`, `tokenstest`) and need no database.
+- **Integration tests** run against a real, disposable Postgres (never a real vault) when both are set:
+  ```bash
+  COVE_TEST_MIGRATE_URL=postgres://cove_migrator:...@localhost:5499/cove_db
+  COVE_TEST_DATABASE_URL=postgres://cove_app:...@localhost:5499/cove_db
+  ```
+  Create the roles and database as in [§5](#roles) first.
+- **CI** (`.github/workflows/ci.yml`) on every push and pull request: gofmt, `go vet`, `go test -race` with a Postgres 16 service (integration tests included), and a build.
+- The `/v0` API contract (paths, status codes, JSON fields) is pinned by `internal/server` tests; CoveClient depends on it.
+- Keep dependencies patched: `govulncheck ./...` (via `go run golang.org/x/vuln/cmd/govulncheck@latest`) should report nothing.
+
+### Releasing
+
+1. Work lands on a branch, then `release/<version>`, and prod is updated only from `main`.
+2. Update `CHANGELOG.md`; merge to `main`; tag `vX.Y.Z` in Cove (and CoveClient if it changed); push the tags.
+3. Deploy on the server with `COVE_VERSION=$(git describe --tags --always)`.
+
+Versions follow [semantic versioning](https://semver.org). The HTTP API stays `/v0` as long as it's backwards compatible.
+
+---
+
+## 17. Known limitations
+
+1. **The master token** has full access; once every project has its own token, it's for emergencies only.
+2. **Token and key management** happens in the CLI (directly on the database), not through the API.
+3. **Values with spaces** can't be entered in the CLI; use the API.
+4. **`history <key>`** shows events under that name only; after a rename, `history <old name>` shows the earlier ones (restore follows renames automatically).
+5. **The audit log is mandatory:** if an event can't be written (e.g. a lost grant), reads and writes fail until it's fixed; the error names the cause.
+6. **Rate-limit counts** live in memory and reset when Cove restarts.
+7. **Anyone with root or Docker access on the server** can read the vault key and master token from the `.env` ([§7](#7-security-model)).
