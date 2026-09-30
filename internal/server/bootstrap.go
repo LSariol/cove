@@ -16,6 +16,9 @@ func (s *Server) bootstrapHandler(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	if s.refuseIfBlocked(w, r) {
+		return
+	}
 	addr := remoteAddr(r)
 
 	outcome, handout, err := s.bootstrap.Claim(addr)
@@ -39,14 +42,17 @@ func (s *Server) bootstrapHandler(w http.ResponseWriter, r *http.Request) {
 	case bootstrap.Redelivered:
 		log.Printf("bootstrap: handed %s to %s again (within the grace period)", what, addr)
 	case bootstrap.Expired:
+		s.limiter.fail(addr, "bootstrap refused")
 		log.Printf("bootstrap: refused %s (the window expired)", addr)
 		writeError(w, http.StatusForbidden, "bootstrap_expired", "the bootstrap window expired before it was used; open it again with `bootstrap open` in the Cove CLI")
 		return
 	case bootstrap.Forbidden:
+		s.limiter.fail(addr, "bootstrap refused")
 		log.Printf("bootstrap: refused %s (not in COVE_BOOTSTRAP_ALLOWED_CIDRS)", addr)
 		writeError(w, http.StatusForbidden, "bootstrap_forbidden", "this address isn't allowed to bootstrap")
 		return
 	default:
+		s.limiter.fail(addr, "bootstrap refused")
 		log.Printf("bootstrap: refused %s (the endpoint is closed)", addr)
 		writeError(w, http.StatusForbidden, "bootstrap_locked", "the bootstrap endpoint is closed; open it with `bootstrap open` in the Cove CLI")
 		return

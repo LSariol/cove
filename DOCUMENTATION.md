@@ -299,6 +299,8 @@ The middleware (`middleware.go`) checks these in order:
 | The token store can't be reached | 503 | `auth_unavailable` (not 401, so a client doesn't conclude its token is wrong) |
 | Neither | 401 | `invalid_token` |
 
+**Rate limit on failures.** An address that fails 10 times within a minute (missing, malformed or wrong tokens, and refused bootstrap requests) is refused for 5 minutes: `429 too_many_requests` with a `Retry-After` header, and a `rate limit:` line in the server log. Requests with a valid token never count, so busy clients are unaffected, and a token check that fails because the database is down (`503`) doesn't count either. The counts live in memory and reset when Cove restarts. (Behind a reverse proxy, every client would share the proxy's address; Cove doesn't publish a port, so this doesn't apply today.)
+
 ### Project tokens
 
 Each project can have its own token instead of sharing the master token. Create them in the CLI:
@@ -474,6 +476,7 @@ Before v1.0.0, every read/delete failure was `404` and every create/update failu
 | `bootstrap_locked`, `bootstrap_expired`, `bootstrap_forbidden` | 403 | bootstrap endpoint closed / window ran out / address not allowed ([§7](#7-bootstrap-flow)) |
 | `decrypt_error` | 500 | the stored value can't be decrypted |
 | `get_all`, `read_error`, `create_error`, `update_error`, `delete_error`, `server_error`, `marker_error` | 500 | database / config / bootstrap state failures |
+| `too_many_requests` | 429 | too many failed attempts from this address; see `Retry-After` |
 | `not_ready` | 503 | `/v0/ready` when the database is unreachable |
 | `auth_unavailable` | 503 | a project token couldn't be checked (database unreachable) |
 
@@ -526,6 +529,7 @@ With CoveClient, the client side is one call on every start: `LoadOrBootstrap(pa
 - **Closed by default:** a fresh install never starts with the endpoint open.
 - **Allowed networks (optional):** set `COVE_BOOTSTRAP_ALLOWED_CIDRS`, e.g. `172.18.0.0/16` for the Docker network. The caller's address comes from the connection itself, never from headers like `X-Forwarded-For`.
 - **Every attempt is recorded** in `cove.bootstrap_log` (time, address, outcome) and in the server log. `bootstrap status` shows the last 5.
+- **Refusals count toward the rate limit:** 10 within a minute block the address for 5 minutes (`429`), even if the endpoint is opened meanwhile.
 - **CLI:** `bootstrap open [project] [duration]` (1m–24h; `bootstrap clear` is the older name), `bootstrap lock` (close now, including any grace period), `bootstrap status` (or just `bootstrap`; also shows which token it hands out).
 
 ### State

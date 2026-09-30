@@ -32,18 +32,25 @@ func callerFrom(ctx context.Context) caller {
 
 // requireToken is middleware that accepts the master token
 // (COVE_CLIENT_SECRET) or a project token in the Authorization header, and
-// records which one was used for the handlers.
+// records which one was used for the handlers. Failed attempts count toward
+// the address's rate limit (see ratelimit.go).
 func (s *Server) requireToken(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if s.refuseIfBlocked(w, r) {
+			return
+		}
+		addr := remoteAddr(r)
 
 		authHeader := r.Header.Get("Authorization")
 		if authHeader == "" {
+			s.limiter.fail(addr, "missing token")
 			writeError(w, http.StatusUnauthorized, "missing_token", "Authorization header is required")
 			return
 		}
 
 		tokenParts := strings.SplitN(authHeader, " ", 2)
 		if len(tokenParts) != 2 || tokenParts[0] != "Bearer" {
+			s.limiter.fail(addr, "malformed Authorization header")
 			writeError(w, http.StatusUnauthorized, "invalid_token_format", "Authorization header must be in the form: Bearer <token>")
 			return
 		}
@@ -69,6 +76,7 @@ func (s *Server) requireToken(next http.Handler) http.Handler {
 			}
 		}
 
+		s.limiter.fail(addr, "invalid token")
 		writeError(w, http.StatusUnauthorized, "invalid_token", "the provided token is invalid")
 	})
 }

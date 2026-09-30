@@ -4,7 +4,7 @@ A review of Cove v0.2.0: bugs, security concerns, and quality-of-life improvemen
 
 CoveClient has its own `IMPROVEMENTS.md`. Items that affect both repos are cross-referenced.
 
-> **Progress (v1.0.0, `release/1.0.0`):** most items are done; they're marked **Done** in the tables below, and the details sections are kept as the record of why. Still open: SEC-11 (rate limiting), SEC-12 and QOL-9 (encryption key rotation), and hidden value entry from QOL-2. Unfamiliar terms are explained in the [Glossary](#10-glossary).
+> **Progress (v1.0.0, `release/1.0.0`):** most items are done; they're marked **Done** in the tables below, and the details sections are kept as the record of why. Still open: SEC-12 and QOL-9 (encryption key rotation), and hidden value entry from QOL-2. Unfamiliar terms are explained in the [Glossary](#10-glossary).
 
 ---
 
@@ -67,7 +67,7 @@ With these rules, no project should need an immediate update.
 | [SEC-8](#sec-8-audit-source-is-self-reported) | `X-Cove-Source` is self-reported and can be spoofed — **Done** | Low | (SEC-4) | Low | Safe |
 | [SEC-9](#sec-9-container-hardening) | Container runs as root, base image unpinned — **Done** | Low | S | Low | Safe |
 | [SEC-10](#sec-10-env-may-be-created-world-readable) | `.env` may be created world-readable — **Done** | Low | S | Low | Safe |
-| [SEC-11](#sec-11-no-rate-limiting) | No rate limiting on auth or bootstrap | Low | S | Low | Safe |
+| [SEC-11](#sec-11-no-rate-limiting) | No rate limiting on auth or bootstrap — **Done** | Low | S | Low | Safe |
 | [SEC-12](#sec-12-ciphertext-isnt-bound-to-its-key-and-has-no-format-version) | Ciphertext isn't bound to its key and has no format version | Low | M | Low | Care |
 
 \* Depends on your network. If the host firewall already blocks port 2100 from outside, this is Medium.

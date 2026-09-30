@@ -35,6 +35,7 @@ type Server struct {
 	db           DB
 	clientSecret string
 	tokens       TokenAuthenticator
+	limiter      *failureLimiter
 	port         string
 	version      string
 }
@@ -47,6 +48,7 @@ func New(v *vault.Vault, gate *bootstrap.Gate, db DB, opts Options) *Server {
 		db:           db,
 		clientSecret: opts.ClientSecret,
 		tokens:       opts.Tokens,
+		limiter:      newFailureLimiter(),
 		port:         opts.Port,
 		version:      opts.Version,
 	}
