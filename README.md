@@ -345,7 +345,7 @@ Open the prompt with `cove shell` (in Docker: `docker exec -it cove /cove shell`
 | `status` | `status` | Health overview |
 | `bootstrap` | `bootstrap [open [project] [duration]\|lock\|status]` | Open the bootstrap endpoint for 10 minutes, close it, or show its state |
 | `token` | `token [list\|create\|show\|allow\|deny\|rotate\|revoke] ...` | Per-project tokens: create one, see what it reaches, change its access, rotate or revoke it |
-| `help` | `help [command]` | All commands, or one |
+| `help` | `help [command\|setup\|patterns]` | Overview, one command with examples, or a guide |
 | `exit` | `exit` | Leave the shell |
 
 ---

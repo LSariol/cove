@@ -507,8 +507,10 @@ The prompt shows the environment from `APP_ENV`: `cove (dev)>`, and `cove (prod)
 | `status` | | `status` | Version, environment, database, schema version, number of secrets, bootstrap state. Non-zero exit when something needs attention. |
 | `bootstrap` | `b` | `bootstrap open [project] [duration]` / `lock` / `status` | Opens the bootstrap endpoint for 10 minutes (or the given duration) to hand out a project's new token or the master token, closes it, or shows its state and recent attempts ([§7](#7-bootstrap-flow)). |
 | `token` | `t` | `token [list]` / `create <name> [--allow <p>]... [--write <p>]...` / `show <name>` / `allow <p> <name>... [--write]` / `deny <p> <name>...` / `rotate <name> [--yes]` / `revoke <name> [--yes]` | Per-project tokens ([§6](#project-tokens)). `create` and `rotate` print the token once, on stdout. Patterns that match no secret get a warning (usually a typo); `deny` warns if a wildcard still covers the key. |
-| `help` | `h` | `help [command]` | All commands, or one. |
+| `help` | `h` | `help [command]` / `help setup` / `help patterns` | A short grouped overview; one command in detail with examples; or a step-by-step guide to setting up a project, or to token patterns. Works without a database (`cove help`). |
 | `exit` | `quit` | `exit` | Leaves the shell (or stops the server in plain `cove`). |
+
+After `create` or `generate`, the CLI says which project tokens can read the new secret, or gives the `token allow` command if none can (only once project tokens exist).
 
 Keys and values are split on whitespace, so they can't contain spaces from the CLI; use the API for those.
 
