@@ -138,7 +138,7 @@ All configuration comes from environment variables. `config.Load()` reads them f
 | `VAULT_ENCRYPTION_KEY` | Yes* | `encryption` | Master key material. SHA-256 of this value is the AES key. Shorter than 24 characters logs a warning. *Generated (45 chars) if empty. |
 | `APP_PORT` | **Yes** | `server.Start` | Listen port. The server binds `0.0.0.0:$APP_PORT`. |
 | `APP_ENV_PATH` | No | `config` | The `.env` file to load first, and where generated secrets are saved. Default: the `.env` file that was loaded. |
-| `APP_MARKER_PATH` | No | `bootstrap.Gate` | Directory for the bootstrap state file (`bootstrap.json`). Default: `/app/vault/markers`. The older name `APP_MARKER_DIR` also works. |
+| `APP_MARKER_PATH` | No | `bootstrap.Gate` | Directory for the bootstrap state file (`bootstrap.json`). Default: `/app/vault/markers`. |
 | `COVE_BOOTSTRAP_ALLOWED_CIDRS` | No | `bootstrap.Gate` | Comma-separated networks and/or addresses that may use the bootstrap endpoint, e.g. `172.18.0.0/16`. Empty allows any address. An invalid entry stops startup. |
 | `VAULT_NEW_ENCRYPTION_KEY` | No | `main` | Only for `cove rotate-key`: the key to re-encrypt the vault with ([§11](#rotating-the-vault-key)). Remove it afterwards. |
 | `COVE_EVENT_LOG_RETENTION_DAYS` | No | `main` | Removes *read* events older than this many days, at startup and then daily. Creates, updates, deletes and renames are always kept. Empty keeps everything. |
@@ -552,7 +552,7 @@ With CoveClient, the client side is one call on every start: `LoadOrBootstrap(pa
 - **Allowed networks (optional):** set `COVE_BOOTSTRAP_ALLOWED_CIDRS`, e.g. `172.18.0.0/16` for the Docker network. The caller's address comes from the connection itself, never from headers like `X-Forwarded-For`.
 - **Every attempt is recorded** in `cove.bootstrap_log` (time, address, outcome) and in the server log. `bootstrap status` shows the last 5.
 - **Refusals count toward the rate limit:** 10 within a minute block the address for 5 minutes (`429`), even if the endpoint is opened meanwhile.
-- **CLI:** `bootstrap open [project] [duration]` (1m–24h; `bootstrap clear` is the older name), `bootstrap lock` (close now, including any grace period), `bootstrap status` (or just `bootstrap`; also shows which token it hands out).
+- **CLI:** `bootstrap open [project] [duration]` (1m–24h), `bootstrap lock` (close now, including any grace period), `bootstrap status` (or just `bootstrap`; also shows which token it hands out).
 
 ### State
 
@@ -586,7 +586,7 @@ The prompt shows the environment from `APP_ENV`: `cove (dev)>`, and `cove (prod)
 | `rename` | | `rename <key> <new-key> [--yes]` | Keeps the value, version and read count. Logged under both keys. If project tokens list the key by name, it asks to update them too (`--yes` does it without asking). |
 | `restore` | | `restore <key> [version] [--yes]` | Brings back the previous value, a specific version, or a deleted secret's last value. Saved as a new version, so nothing is lost. |
 | `list` | `l` | `list [prefix]` | Table of keys (optionally starting with `prefix`): version, reads, created, updated, and a count. Never shows values. |
-| `search` | `s` | `search <text>` | Keys containing `text` (not case-sensitive). The older `list <text> fuzzy` still works. |
+| `search` | `s` | `search <text>` | Keys containing `text` (not case-sensitive). |
 | `info` | `i` | `info <key>` | Version, app reads, when and by whom it was last read, created and updated times, and which project tokens can read it. For a deleted key, says when and by whom it was deleted. |
 | `history` | | `history <key> [count]` | The last `count` events (default 20): when, what, version, source, detail. Works for deleted keys. |
 | `status` | | `status` | Version, environment, database, schema version, number of secrets, vault key (OK with fingerprint and last rotation, or WRONG), bootstrap state. Non-zero exit when something needs attention. |

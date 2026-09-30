@@ -93,19 +93,14 @@ func TestLoadPrefersAppEnvPath(t *testing.T) {
 }
 
 func TestMarkerDir(t *testing.T) {
-	unsetEnv(t, "APP_MARKER_PATH", "APP_MARKER_DIR")
+	unsetEnv(t, "APP_MARKER_PATH")
 	if got := fromEnv(".env").MarkerDir; got != defaultMarkerDir {
 		t.Errorf("default MarkerDir = %q", got)
 	}
 
-	t.Setenv("APP_MARKER_DIR", "/old/name")
-	if got := fromEnv(".env").MarkerDir; got != "/old/name" {
-		t.Errorf("MarkerDir with APP_MARKER_DIR = %q", got)
-	}
-
 	t.Setenv("APP_MARKER_PATH", "/new/name")
 	if got := fromEnv(".env").MarkerDir; got != "/new/name" {
-		t.Errorf("APP_MARKER_PATH should win, got %q", got)
+		t.Errorf("MarkerDir with APP_MARKER_PATH = %q", got)
 	}
 }
 

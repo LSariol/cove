@@ -24,7 +24,7 @@ type Config struct {
 	EncryptionKey      string // VAULT_ENCRYPTION_KEY: source of the AES key
 	Port               string // APP_PORT
 	EnvPath            string // APP_ENV_PATH: file that generated secrets are written to (default: the .env file that was loaded)
-	MarkerDir          string // APP_MARKER_PATH (or APP_MARKER_DIR): bootstrap marker directory
+	MarkerDir          string // APP_MARKER_PATH: bootstrap state directory
 	Env                string // APP_ENV: "DEV" or "PROD", shown in the CLI prompt
 
 	// NewEncryptionKey (VAULT_NEW_ENCRYPTION_KEY) is only used by
@@ -51,12 +51,6 @@ const minSecretLength = 24
 // exists is loaded.
 var envFiles = []string{".env", "/app/vault/.env"}
 
-// Load reads the .env file and returns the Config.
-//
-// The file is APP_ENV_PATH if that is set in the environment (as in
-// docker-compose), otherwise the first of ./.env and /app/vault/.env that
-// exists. A file that exists but can't be read or parsed is an error; Load
-// doesn't silently move on to the next one.
 // permissionError explains a .env Cove isn't allowed to read. In Docker, Cove
 // runs as user 10001, so a file created by root on the host is off limits
 // until it's handed over.
@@ -70,6 +64,12 @@ func permissionError(path string) error {
 		path, uid, filepath.Dir(path), uid, os.Getgid())
 }
 
+// Load reads the .env file and returns the Config.
+//
+// The file is APP_ENV_PATH if that is set in the environment (as in
+// docker-compose), otherwise the first of ./.env and /app/vault/.env that
+// exists. A file that exists but can't be read or parsed is an error; Load
+// doesn't silently move on to the next one.
 func Load() (Config, error) {
 	candidates := envFiles
 	if path := os.Getenv("APP_ENV_PATH"); path != "" {
@@ -115,10 +115,6 @@ func fromEnv(envFile string) Config {
 		cfg.EnvPath = envFile
 	}
 
-	// APP_MARKER_DIR is an older name that docker-compose.yml used to set.
-	if cfg.MarkerDir == "" {
-		cfg.MarkerDir = os.Getenv("APP_MARKER_DIR")
-	}
 	if cfg.MarkerDir == "" {
 		cfg.MarkerDir = defaultMarkerDir
 	}
