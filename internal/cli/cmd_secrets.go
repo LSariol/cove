@@ -37,6 +37,7 @@ func (c *CLI) create(ctx context.Context, args []string) error {
 	}
 
 	success(fmt.Sprintf("Created %q.", key))
+	warnNaming(key)
 	c.describeNewKeyAccess(ctx, key)
 	return nil
 }
@@ -157,6 +158,7 @@ func (c *CLI) rename(ctx context.Context, args []string) error {
 	}
 
 	success(fmt.Sprintf("Renamed %q to %q.", oldKey, newKey))
+	warnNaming(newKey)
 
 	if len(listing) > 0 {
 		updated, err := c.tokens.RenameKey(ctx, oldKey, newKey, source)
