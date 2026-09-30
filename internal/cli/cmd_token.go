@@ -57,7 +57,7 @@ func (c *CLI) tokenList(ctx context.Context) error {
 		return fmt.Errorf("Couldn't list tokens: %v", err)
 	}
 	if len(list) == 0 {
-		info("No project tokens yet. Create one with \"token create <name> --allow '<name>.*'\".")
+		info("No project tokens yet. Create one with \"token create <name> --allow '<NAME>_*'\".")
 		return nil
 	}
 

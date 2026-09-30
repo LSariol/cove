@@ -177,7 +177,7 @@ Authorization: Bearer <token>
 The token is either the master token (`COVE_CLIENT_SECRET`), which can reach every secret, or a **project token** created with `token create` in the CLI, which can only reach the keys it was given:
 
 ```
-cove> token create lighthouse --allow 'lighthouse.*' --allow shared.discord-webhook
+cove> token create marquee --allow 'MARQUEE_*' --allow SHARED_DISCORD_WEBHOOK_URL
 ```
 
 A project token asking for a key outside its access gets `403 forbidden_key`, and `GET /v0/secrets` lists only its keys. See [DOCUMENTATION.md §6](DOCUMENTATION.md#project-tokens).
@@ -362,7 +362,7 @@ Open the prompt with `cove shell` (in Docker: `docker exec -it cove /cove shell`
 
 ## Connecting a project
 
-The standard: **Lighthouse injects each project's secrets when it deploys it.** The project's compose file names them in braces (`DATABASE_URL={marquee.db-url}`), and the project reads plain environment variables; it has no Cove code or token. Only a project that changes secrets itself (e.g. botsuite) gets its own token (`COVE_URL=http://cove:2100`, `COVE_TOKEN={lighthouse.token.botsuite}`) and uses CoveClient. Lighthouse has a read-only token over everything; no project gets the master token. Details: [DOCUMENTATION.md §6](DOCUMENTATION.md#connecting-a-project-the-standard). In the CLI: `help setup`.
+The standard: **Lighthouse injects each project's secrets when it deploys it.** The project's compose file refers to each by its Cove name (`DATABASE_URL=${MARQUEE_DATABASE_URL}`), Lighthouse fetches every `${...}` from Cove and passes it to `docker compose`, and the project reads plain environment variables; it has no Cove code or token. Only a project that changes secrets itself (e.g. botsuite) gets its own token (`COVE_URL=http://cove:2100`, `COVE_TOKEN=${BOTSUITE_COVE_TOKEN}`) and uses CoveClient. Lighthouse has a read-only token over everything; no project gets the master token. Keys are named **`PROJECT_PLATFORM_TYPE`**, e.g. `BOTSUITE_TWITCH_CLIENT_ID`, `SHARED_TMDB_API_KEY`, `MARQUEE_DATABASE_URL` (capitals, digits and `_` only, so they work as Compose variables). Details: [DOCUMENTATION.md §6](DOCUMENTATION.md#connecting-a-project-the-standard). In the CLI: `help setup`.
 
 ## CoveClient
 

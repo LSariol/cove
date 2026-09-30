@@ -58,7 +58,7 @@ func TestHelpForOneCommand(t *testing.T) {
 	}
 
 	o, _ = helpOutput(t, c, "token")
-	for _, want := range []string{"token, t create <name>", "Examples:", "token allow shared.openai-key botsuite marquee", `"help patterns"`} {
+	for _, want := range []string{"token, t create <name>", "Examples:", "token allow SHARED_OPENAI_API_KEY botsuite marquee", `"help patterns"`} {
 		if !strings.Contains(o, want) {
 			t.Errorf("help token is missing %q:\n%s", want, o)
 		}
@@ -78,7 +78,7 @@ func TestHelpGuides(t *testing.T) {
 	c, _ := newTestCLI(t, "")
 
 	o, err := helpOutput(t, c, "setup")
-	for _, want := range []string{"DATABASE_URL={marquee.db-url}", "COVE_TOKEN={lighthouse.token.marquee}", "--write marquee.oauth-token"} {
+	for _, want := range []string{"DATABASE_URL=${MARQUEE_DATABASE_URL}", "COVE_TOKEN=${MARQUEE_COVE_TOKEN}", "--write MARQUEE_TWITCH_ACCESS_TOKEN", "PROJECT_PLATFORM_TYPE"} {
 		if err != nil || !strings.Contains(o, want) {
 			t.Errorf("help setup is missing %q (%v):\n%s", want, err, o)
 		}

@@ -72,7 +72,7 @@ func commandTable(embedded bool) []command {
 			synopsis: "<key>",
 			summary:  "Show a secret's value",
 			usages:   []usage{{forms: []string{"<key>"}, help: "Shows the decrypted value of a secret."}},
-			examples: []string{"get lighthouse.github-pat"},
+			examples: []string{"get LIGHTHOUSE_GITHUB_TOKEN"},
 			run:      (*CLI).get,
 			complete: (*CLI).keyNames,
 		},
@@ -84,8 +84,8 @@ func commandTable(embedded bool) []command {
 			usages: []usage{{forms: []string{"<key> <value>"}, help: "Creates a new secret. Afterwards it says which project tokens can read it,\n" +
 				"      and how to give one access if none can."}},
 			examples: []string{
-				"create lighthouse.github-pat ghp_xxxx",
-				"create shared.tmdb-api-key xxxx        then: token allow shared.tmdb-api-key botsuite marquee",
+				"create LIGHTHOUSE_GITHUB_TOKEN ghp_xxxx",
+				"create SHARED_TMDB_API_KEY xxxx        then: token allow SHARED_TMDB_API_KEY botsuite marquee",
 			},
 			run: (*CLI).create,
 		},
@@ -95,7 +95,7 @@ func commandTable(embedded bool) []command {
 			synopsis: "<key> <value>",
 			summary:  "Change a secret's value",
 			usages:   []usage{{forms: []string{"<key> <value>"}, help: "Replaces a secret's value and increases its version."}},
-			examples: []string{"update shared.tmdb-api-key new-value"},
+			examples: []string{"update SHARED_TMDB_API_KEY new-value"},
 			run:      (*CLI).update,
 			complete: (*CLI).keyNames,
 		},
@@ -109,7 +109,7 @@ func commandTable(embedded bool) []command {
 				help: "Creates a secret with a random value (letters and digits, 32 characters\n" +
 					"      unless given) and shows it. If the key exists, asks before replacing its value.",
 			}},
-			examples: []string{"generate marquee.session-key 64"},
+			examples: []string{"generate MARQUEE_SESSION_SECRET 64"},
 			run:      (*CLI).generate,
 			complete: (*CLI).keyNames,
 		},
@@ -130,7 +130,7 @@ func commandTable(embedded bool) []command {
 			usages: []usage{{forms: []string{"<key> <new-key> [--yes]"}, help: "Renames a secret, keeping its value, version and history.\n" +
 				"      Apps using the old key stop finding it. Tokens that list the key by name\n" +
 				"      are updated too (asks first unless --yes is given)."}},
-			examples: []string{"rename shared.tmdb-api-key shared.tmdb-key"},
+			examples: []string{"rename tmdb.api-key SHARED_TMDB_API_KEY       bring an old key into the naming standard"},
 			run:      (*CLI).rename,
 			complete: (*CLI).keyNames,
 		},
@@ -203,11 +203,12 @@ func commandTable(embedded bool) []command {
 				{forms: []string{"revoke <name> [--yes]"}, help: "Deletes a token. The project can't reach Cove until it gets a new one."},
 			},
 			examples: []string{
-				"token create lighthouse --allow lighthouse.*",
-				"token create botsuite --allow botsuite.* --allow shared.tmdb-api-key",
-				"token allow shared.openai-key botsuite marquee     share a key with two projects",
-				"token allow botsuite.cache.* botsuite --write      let botsuite change its cache keys",
-				"token deny shared.openai-key marquee",
+				"token create lighthouse --allow *                    Lighthouse: read-only over everything",
+				"token create marquee --allow MARQUEE_*",
+				"token create botsuite --allow BOTSUITE_* --allow SHARED_TMDB_API_KEY",
+				"token allow SHARED_OPENAI_API_KEY botsuite marquee     share a key with two projects",
+				"token allow BOTSUITE_TWITCH_ACCESS_TOKEN botsuite --write   let botsuite update its Twitch token",
+				"token deny SHARED_OPENAI_API_KEY marquee",
 				"token show marquee                                 what can marquee reach?",
 			},
 			run:      (*CLI).tokenCmd,
@@ -272,38 +273,45 @@ const setupGuide = `Setting up a new project (e.g. "marquee")
 The standard: Lighthouse hands a project its secrets when it deploys it. The
 project only reads environment variables; it has no Cove code or token.
 
-1. Add its secrets. Name them <project>.<name>; shared ones shared.<name>:
-     create marquee.db-url postgres://...
-     generate marquee.session-key 64
+1. Add its secrets, named PROJECT_PLATFORM_TYPE (shared ones SHARED_...):
+     create MARQUEE_DATABASE_URL postgres://...
+     create MARQUEE_TWITCH_CLIENT_ID abc123
+     generate MARQUEE_SESSION_SECRET 64
+   TYPE is one of: API_KEY, CLIENT_ID, CLIENT_SECRET, ACCESS_TOKEN,
+   REFRESH_TOKEN, TOKEN, URL, PASSWORD, SECRET. Capitals, digits and _ only,
+   so the name works as a ${...} variable in a compose file.
 
-2. In the project's docker-compose.yml, name each secret in braces:
+2. In the project's docker-compose.yml, refer to each secret as ${KEY}:
      environment:
-       - DATABASE_URL={marquee.db-url}
-       - TMDB_API_KEY={shared.tmdb-api-key}
-   Lighthouse fills them in on deploy. The project reads os.Getenv(...).
+       - DATABASE_URL=${MARQUEE_DATABASE_URL}
+       - TMDB_API_KEY=${SHARED_TMDB_API_KEY}
+   Lighthouse fetches every ${...} name from Cove on deploy and passes it
+   to docker compose, which fills them in. The project reads os.Getenv(...).
 
-3. Deploy it with Lighthouse. Check: "history marquee.db-url" shows
+3. Deploy it with Lighthouse. Check: "history MARQUEE_DATABASE_URL" shows
    lighthouse as the reader.
 
 Only if the project must change secrets itself (e.g. botsuite refreshing
 its Twitch tokens), it also gets its own token:
 
 4. Create it, with --write only on the keys it updates:
-     token create marquee --allow marquee.* --write marquee.oauth-token
+     token create marquee --allow MARQUEE_* --write MARQUEE_TWITCH_ACCESS_TOKEN
    Store the printed token (shown once) for Lighthouse to hand over:
-     create lighthouse.token.marquee <the token>
+     create MARQUEE_COVE_TOKEN <the token>
 
-5. Add to its compose file, and use CoveClient with these two values:
+5. Add to its compose file, and use CoveClient with these two values
+   (COVE_URL isn't a secret, so it's written out):
        - COVE_URL=http://cove:2100
-       - COVE_TOKEN={lighthouse.token.marquee}
+       - COVE_TOKEN=${MARQUEE_COVE_TOKEN}
 
 6. Check: "token show marquee" (what it can reach), "token list" (last used).
 
 Later:
-  A new secret for it:        create it, add {key} to its compose, redeploy
+  A new secret for it:        create it, add ${KEY} to its compose, redeploy
+  An old key, other naming:   rename old.name MARQUEE_..., update ${...}, redeploy
   Changed a secret's value:   redeploy it with Lighthouse
-  Token leaked or lost:       token rotate marquee, update lighthouse.token.marquee
-  Who can read a key?         info shared.tmdb-api-key
+  Token leaked or lost:       token rotate marquee, update MARQUEE_COVE_TOKEN
+  Who can read a key?         info SHARED_TMDB_API_KEY
 
 Lighthouse itself: token create lighthouse --allow * (read-only: it can
 deploy everything but change nothing), then bootstrap open lighthouse.`
@@ -311,11 +319,11 @@ deploy everything but change nothing), then bootstrap open lighthouse.`
 const patternsGuide = `How token patterns match keys
 
 A token can only reach the secrets its patterns cover. Nothing else is
-reachable, and a key named "shared.x" isn't special: it must be allowed.
+reachable, and a key starting SHARED_ isn't special: it must be allowed.
 
   Pattern              Matches
-  marquee.*            every key starting with "marquee." (marquee.db-url, ...)
-  shared.tmdb-api-key  exactly that key
+  MARQUEE_*            every key starting with "MARQUEE_" (MARQUEE_DATABASE_URL, ...)
+  SHARED_TMDB_API_KEY  exactly that key
   *                    every key (like the master token, but revocable)
 
 Keys are case-sensitive. "*" only works at the end of a pattern.
@@ -326,7 +334,7 @@ Keys are case-sensitive. "*" only works at the end of a pattern.
                     and break another project.
 
 If a project asks for a key its token doesn't cover, it gets
-"403 forbidden_key: marquee's token can't read botsuite.db-url".
+"403 forbidden_key: marquee's token can't read BOTSUITE_DATABASE_URL".
 Fix it with: token allow <key> <project>
 
 Renaming a key that tokens list by name offers to update them. Deleting one

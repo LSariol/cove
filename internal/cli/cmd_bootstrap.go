@@ -132,7 +132,7 @@ func (c *CLI) bootstrapStatus(ctx context.Context) error {
 func (c *CLI) bootstrapOpenFor(ctx context.Context, project string, window time.Duration) error {
 	if _, err := c.tokens.Get(ctx, project); err != nil {
 		if errors.Is(err, tokens.ErrNotFound) {
-			return fmt.Errorf("No token named %q. Create it first: token create %s --allow '%s.*'", project, project, project)
+			return fmt.Errorf("No token named %q. Create it first: token create %s --allow '%s_*'", project, project, strings.ToUpper(project))
 		}
 		return fmt.Errorf("Couldn't read %s's token: %v", project, err)
 	}
