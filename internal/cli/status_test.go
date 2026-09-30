@@ -64,3 +64,33 @@ func TestStatusReportsProblems(t *testing.T) {
 		t.Errorf("status output = %s", o.String())
 	}
 }
+
+func TestStatusShowsTheVaultKey(t *testing.T) {
+	ctx := context.Background()
+	store := vaulttest.NewStore()
+	v := vault.New(store, encryption.NewCipher("test-vault-key"))
+	c := New(v, nil, Options{DB: &fakeDB{have: 11, want: 11}})
+
+	o, _ := captureOutput(t)
+	c.Exec(ctx, []string{"status"})
+	if !strings.Contains(o.String(), "Vault key:    not recorded yet") {
+		t.Errorf("before the key is recorded:\n%s", o.String())
+	}
+
+	_ = v.EnsureKey(ctx)
+	o, _ = captureOutput(t)
+	if err := c.Exec(ctx, []string{"status"}); err != nil {
+		t.Fatal(err)
+	}
+	fp := encryption.NewCipher("test-vault-key").Fingerprint()[:8]
+	if !strings.Contains(o.String(), "Vault key:    OK (fingerprint "+fp+", never rotated)") {
+		t.Errorf("with the right key:\n%s", o.String())
+	}
+
+	store.SetVaultKey(encryption.NewCipher("another-key").Fingerprint())
+	o, _ = captureOutput(t)
+	err := c.Exec(ctx, []string{"status"})
+	if err == nil || !strings.Contains(o.String(), "Vault key:    WRONG") {
+		t.Errorf("after a rotation elsewhere: %v\n%s", err, o.String())
+	}
+}

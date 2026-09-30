@@ -62,6 +62,24 @@ func (c *CLI) status(ctx context.Context, args []string) error {
 			rows = append(rows, [2]string{"Secrets", "unknown"})
 			problems = append(problems, fmt.Sprintf("secrets couldn't be listed (%v)", err))
 		}
+
+		key, err := c.vault.KeyStatus(ctx)
+		switch {
+		case err != nil:
+			rows = append(rows, [2]string{"Vault key", "unknown"})
+			problems = append(problems, fmt.Sprintf("the vault key couldn't be checked (%v)", err))
+		case !key.Recorded:
+			rows = append(rows, [2]string{"Vault key", "not recorded yet (the server records it when it starts)"})
+		case !key.Matches:
+			rows = append(rows, [2]string{"Vault key", "WRONG: VAULT_ENCRYPTION_KEY isn't the key this vault is encrypted with"})
+			problems = append(problems, "VAULT_ENCRYPTION_KEY isn't the vault's key (if it was just rotated, update the .env and restart)")
+		default:
+			rotated := "never rotated"
+			if key.RotatedAt != nil {
+				rotated = "rotated " + formatTime(*key.RotatedAt)
+			}
+			rows = append(rows, [2]string{"Vault key", fmt.Sprintf("OK (fingerprint %s, %s)", key.Fingerprint[:8], rotated)})
+		}
 	}
 
 	if c.bootstrap != nil {
