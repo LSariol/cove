@@ -17,7 +17,7 @@ The first stable release: a rework of v0.2.0 for security, reliability and day-t
 - **Precise error statuses:** a duplicate create is `409`, updating a missing key `404`, decrypt and database failures `500`. Success codes are unchanged.
 - **The first start records the vault key.** After that, Cove refuses to start with a different `VAULT_ENCRYPTION_KEY`; change it only with `cove rotate-key`.
 - `vault.json` and `APP_VAULT_PATH` are gone; `APP_MARKER_DIR` is now only `APP_MARKER_PATH`.
-- Building needs **Go 1.27**.
+- Building needs **Go 1.27.1** or newer.
 
 ### Security
 

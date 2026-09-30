@@ -41,7 +41,7 @@ docker exec cove /cove status
 
 Cove joins the external `spark` network and is reachable only there, at `http://cove:2100`. The database roles it needs are in [DOCUMENTATION.md §5](DOCUMENTATION.md#roles).
 
-### Locally (Go 1.27)
+### Locally (Go 1.27.1)
 
 ```bash
 cp .env.example .env      # set COVE_DATABASE_URL and COVE_MIGRATE_DATABASE_URL

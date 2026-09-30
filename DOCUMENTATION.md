@@ -527,7 +527,7 @@ Output follows [clig.dev](https://clig.dev): data on stdout (so `$(cove get KEY)
 
 ## 12. Running locally
 
-Needs **Go 1.27** and a Postgres with the roles from [§5](#roles) (the dev `sparkdb-dev` container works).
+Needs **Go 1.27.1** or newer and a Postgres with the roles from [§5](#roles) (the dev `sparkdb-dev` container works).
 
 ```bash
 cp .env.example .env      # set COVE_DATABASE_URL and COVE_MIGRATE_DATABASE_URL; leave the secrets empty
@@ -661,6 +661,7 @@ go vet ./... && go test ./...
   Create the roles and database as in [§5](#roles) first.
 - **CI** (`.github/workflows/ci.yml`) on every push and pull request: gofmt, `go vet`, `go test -race` with a Postgres 16 service (integration tests included), and a build.
 - The `/v0` API contract (paths, status codes, JSON fields) is pinned by `internal/server` tests; CoveClient depends on it.
+- **The Go version is pinned in two places, kept equal:** `go 1.27.1` in `go.mod` (the minimum for any build; CI uses it too) and `golang:1.27.1-alpine` in the `Dockerfile` (what prod runs). When Go releases a patch (e.g. 1.27.2, with security fixes), bump both in one commit.
 - Keep dependencies patched: `govulncheck ./...` (via `go run golang.org/x/vuln/cmd/govulncheck@latest`) should report nothing.
 
 ### Releasing
