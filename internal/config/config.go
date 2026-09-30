@@ -7,6 +7,7 @@ import (
 	"io/fs"
 	"net/netip"
 	"os"
+	"path/filepath"
 	"strconv"
 	"strings"
 
@@ -52,6 +53,19 @@ var envFiles = []string{".env", "/app/vault/.env"}
 // docker-compose), otherwise the first of ./.env and /app/vault/.env that
 // exists. A file that exists but can't be read or parsed is an error; Load
 // doesn't silently move on to the next one.
+// permissionError explains a .env Cove isn't allowed to read. In Docker, Cove
+// runs as user 10001, so a file created by root on the host is off limits
+// until it's handed over.
+func permissionError(path string) error {
+	uid := os.Getuid()
+	if uid < 0 { // Windows has no uids
+		return fmt.Errorf("can't read %s: permission denied", path)
+	}
+	return fmt.Errorf("can't read %s: permission denied. Cove runs as user %d, which must own it. "+
+		"In Docker, run this on the host, for the folder mounted at %s (e.g. /srv/server/storage/cove): chown -R %d:%d <folder>",
+		path, uid, filepath.Dir(path), uid, os.Getgid())
+}
+
 func Load() (Config, error) {
 	candidates := envFiles
 	if path := os.Getenv("APP_ENV_PATH"); path != "" {
@@ -64,6 +78,9 @@ func Load() (Config, error) {
 		}
 
 		if err := godotenv.Load(path); err != nil {
+			if errors.Is(err, fs.ErrPermission) {
+				return Config{}, permissionError(path)
+			}
 			return Config{}, fmt.Errorf("can't read %s: %w (each line must be NAME=value)", path, err)
 		}
 		return fromEnv(path), nil
