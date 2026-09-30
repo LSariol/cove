@@ -1,5 +1,5 @@
 # -- Build --
-FROM golang:1.25.1-alpine AS builder
+FROM golang:1.27.1-alpine AS builder
 WORKDIR /app
 COPY . .
 # Set with: COVE_VERSION=$(git describe --tags --always) docker compose up -d --build
