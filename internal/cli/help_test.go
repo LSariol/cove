@@ -78,8 +78,10 @@ func TestHelpGuides(t *testing.T) {
 	c, _ := newTestCLI(t, "")
 
 	o, err := helpOutput(t, c, "setup")
-	if err != nil || !strings.Contains(o, "token create marquee --allow marquee.*") || !strings.Contains(o, "bootstrap open marquee") {
-		t.Fatalf("help setup = %q, %v", o, err)
+	for _, want := range []string{"DATABASE_URL={marquee.db-url}", "COVE_TOKEN={lighthouse.token.marquee}", "--write marquee.oauth-token"} {
+		if err != nil || !strings.Contains(o, want) {
+			t.Errorf("help setup is missing %q (%v):\n%s", want, err, o)
+		}
 	}
 
 	o, err = helpOutput(t, c, "patterns")

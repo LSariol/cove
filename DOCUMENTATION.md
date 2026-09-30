@@ -315,7 +315,48 @@ cove> token create botsuite   --allow 'botsuite.*'   --allow shared.tmdb-api-key
   - The event log records the token's name as the source. `X-Cove-Source` isn't needed and is ignored, so the log can't be spoofed.
 - **The master token is unchanged** and keeps full access, so projects can move to their own tokens one at a time.
 
-See [§11](#moving-a-project-to-its-own-token) for moving a project over.
+See [Connecting a project](#connecting-a-project-the-standard) for how projects are expected to use Cove, and [§11](#moving-a-project-to-the-standard) for moving an existing project over.
+
+### Connecting a project (the standard)
+
+Every project gets its secrets the same way, so there's one thing to remember and one thing to check.
+
+**Default: Lighthouse injects the values at deploy time.** The project's `docker-compose.yml` names each secret it needs in braces, and Lighthouse fills them in from Cove when it deploys:
+
+```yaml
+environment:
+  - DATABASE_URL={marquee.db-url}
+  - TMDB_API_KEY={shared.tmdb-api-key}
+```
+
+The project just reads environment variables (`os.Getenv("DATABASE_URL")`). It has **no Cove code, no Cove address and no Cove token**. Off-the-shelf images (ones you didn't write) work the same way.
+
+**Exception: a project that changes secrets itself** (today: botsuite, refreshing its Twitch tokens) also gets its own token, allowed to write only the keys it updates:
+
+```
+cove> token create botsuite --allow 'botsuite.*' --write botsuite.twitch-oauth
+cove> create lighthouse.token.botsuite <the printed token>
+```
+
+```yaml
+environment:
+  - COVE_URL=http://cove:2100
+  - COVE_TOKEN={lighthouse.token.botsuite}
+```
+
+The project uses CoveClient with those two values (`coveclient.New(os.Getenv("COVE_URL"), os.Getenv("COVE_TOKEN"), "botsuite")`). It can also read its own keys that way, or have them injected like any other project.
+
+**Lighthouse** has its own read-only token over everything (`token create lighthouse --allow '*'`): it can read any secret to deploy it, but can't change or delete one. It gets that token with `bootstrap open lighthouse` and CoveClient's `LoadOrBootstrap`.
+
+**The master token (`COVE_CLIENT_SECRET`) is given to no project.** Keep it for emergencies.
+
+| Key naming | Used for |
+|---|---|
+| `<project>.<name>` | a project's own secrets, e.g. `marquee.db-url` |
+| `shared.<name>` | secrets used by more than one project, e.g. `shared.tmdb-api-key` |
+| `lighthouse.token.<project>` | the token of a project that writes back, for Lighthouse to hand over |
+
+Why injection is the default: on a single server, anyone who can see a container's environment can also get inside it, so passing a token instead of values protects nothing extra; injection needs no Cove code in the project, works for any language or image, and lets a project restart even while Cove is down. After changing a secret's value, redeploy the projects that use it (`info <key>` shows who reads it). A token is only worth its extra moving parts when the project must write.
 
 ### Routes
 
@@ -631,20 +672,27 @@ Back up all of these. **Without the key, the DB dump is useless.**
 1. PostgreSQL: `pg_dump -n cove ...`
 2. `/srv/server/storage/cove/.env` (contains `VAULT_ENCRYPTION_KEY` and `COVE_CLIENT_SECRET`)
 
-### Moving a project to its own token
+### Moving a project to the standard
 
-One project at a time, whenever convenient; the others keep using the master token meanwhile.
+One project at a time ([Connecting a project](#connecting-a-project-the-standard) describes the target).
 
-1. `token create <project> --allow '<project>.*'` (plus any shared keys, e.g. `--allow shared.tmdb-api-key`). Copy the printed token.
-2. `token show <project>` and check the list of secrets it can reach. Warnings mean a pattern matches nothing.
-3. Put the token where the project reads its Cove token (its `.env`, or its `LoadOrBootstrap` token file) and restart it. No code changes are needed.
-4. Check it works: `token list` shows a "last used" time, and `history <key>` shows the project's name as the source.
+**A project that only reads secrets:**
+1. List what it gets from Cove today: its `GetSecret`/`GetSecrets` calls, and any `{...}` placeholders already in its compose file.
+2. For each secret it fetches itself, add a line to its compose file (`NAME={key}`) and read `os.Getenv("NAME")` in the code instead.
+3. Remove `COVE_CLIENT_SECRET` (and any Cove URL) from its compose/`.env`, and CoveClient from its code.
+4. Redeploy with Lighthouse. Check: it starts and works, and `history <one of its keys>` shows `lighthouse` as the reader (not the project).
 
-If something was missed, the project gets `403 forbidden_key` naming the key; `token allow <key> <project>` fixes it without a restart.
+**A project that writes back (e.g. botsuite):**
+1. `token create <project> --allow '<project>.*' --write <each key it updates>`, then `create lighthouse.token.<project> <the printed token>`.
+2. `token show <project>`: check what it can reach; warnings mean a pattern matches nothing.
+3. In its compose: `COVE_URL=http://cove:2100` and `COVE_TOKEN={lighthouse.token.<project>}`, replacing `COVE_CLIENT_SECRET`. In the code, CoveClient v1.0.0 with those two values.
+4. Redeploy. Check: `token list` shows a "last used" time; `history <a key it writes>` shows the project's name. If it hits `403 forbidden_key`, the message names the key: `token allow <key> <project>` (add `--write` to change it) fixes it without a restart.
+
+When no project holds the master token any more, change it (see [Rotating the master token](#rotating-the-master-token)).
 
 ### Rotating a project token
 
-`token rotate <project>` prints a new token with the same access; the old one stops working at once. Put the new one in the project's config and restart it. For a project that fetches its token with `LoadOrBootstrap`, delete its token file and use `bootstrap open <project>` instead. If a token may have leaked, `token revoke <project>` stops it immediately, and every shared secret it could read should be changed too (`info <key>` lists who can read a key).
+`token rotate <project>` prints a new token with the same access; the old one stops working at once. Save it with `update lighthouse.token.<project> <new token>` and redeploy the project. For Lighthouse itself (which fetches its token with `LoadOrBootstrap`), delete its token file and use `bootstrap open lighthouse` instead. If a token may have leaked, `token revoke <project>` stops it immediately, and every shared secret it could read should be changed too (`info <key>` lists who can read a key).
 
 ### Rotating the master token
 

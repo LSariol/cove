@@ -354,6 +354,10 @@ Open the prompt with `cove shell` (in Docker: `docker exec -it cove /cove shell`
 
 ---
 
+## Connecting a project
+
+The standard: **Lighthouse injects each project's secrets when it deploys it.** The project's compose file names them in braces (`DATABASE_URL={marquee.db-url}`), and the project reads plain environment variables; it has no Cove code or token. Only a project that changes secrets itself (e.g. botsuite) gets its own token (`COVE_URL=http://cove:2100`, `COVE_TOKEN={lighthouse.token.botsuite}`) and uses CoveClient. Lighthouse has a read-only token over everything; no project gets the master token. Details: [DOCUMENTATION.md §6](DOCUMENTATION.md#connecting-a-project-the-standard). In the CLI: `help setup`.
+
 ## CoveClient
 
 [CoveClient](https://github.com/LSariol/CoveClient) is an official Go module that wraps the Cove HTTP API. It handles authentication, the `X-Cove-Source` header, and response envelope decoding, so consuming applications do not need to implement raw HTTP logic.

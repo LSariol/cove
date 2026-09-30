@@ -269,32 +269,44 @@ var guides = []struct {
 
 const setupGuide = `Setting up a new project (e.g. "marquee")
 
-1. Add its secrets. Start each key with the project's name, so one pattern
-   covers them all:
+The standard: Lighthouse hands a project its secrets when it deploys it. The
+project only reads environment variables; it has no Cove code or token.
+
+1. Add its secrets. Name them <project>.<name>; shared ones shared.<name>:
      create marquee.db-url postgres://...
      generate marquee.session-key 64
 
-2. Create its token, allowing its own keys and any shared ones it needs:
-     token create marquee --allow marquee.* --allow shared.tmdb-api-key
-   Copy the token it prints; it's shown only once.
+2. In the project's docker-compose.yml, name each secret in braces:
+     environment:
+       - DATABASE_URL={marquee.db-url}
+       - TMDB_API_KEY={shared.tmdb-api-key}
+   Lighthouse fills them in on deploy. The project reads os.Getenv(...).
 
-3. Check what it can reach (a warning means a pattern matches nothing):
-     token show marquee
+3. Deploy it with Lighthouse. Check: "history marquee.db-url" shows
+   lighthouse as the reader.
 
-4. Give the token to the project, in one of two ways:
-   - Put it where the project reads its Cove token (e.g. its .env), or
-   - If it uses CoveClient's LoadOrBootstrap: bootstrap open marquee, then
-     start the project; it fetches and saves its token by itself.
+Only if the project must change secrets itself (e.g. botsuite refreshing
+its Twitch tokens), it also gets its own token:
 
-5. Check it's working: "token list" shows when it was last used, and
-   "history marquee.db-url" shows marquee as the reader.
+4. Create it, with --write only on the keys it updates:
+     token create marquee --allow marquee.* --write marquee.oauth-token
+   Store the printed token (shown once) for Lighthouse to hand over:
+     create lighthouse.token.marquee <the token>
+
+5. Add to its compose file, and use CoveClient with these two values:
+       - COVE_URL=http://cove:2100
+       - COVE_TOKEN={lighthouse.token.marquee}
+
+6. Check: "token show marquee" (what it can reach), "token list" (last used).
 
 Later:
-  A new secret for it:        create marquee.new-key value   (marquee.* covers it)
-  Share a key with it:        token allow shared.openai-key marquee
-  Take a key away:            token deny shared.openai-key marquee
-  Token leaked or lost:       token rotate marquee  (or: token revoke marquee)
-  Who can read a key?         info shared.tmdb-api-key`
+  A new secret for it:        create it, add {key} to its compose, redeploy
+  Changed a secret's value:   redeploy it with Lighthouse
+  Token leaked or lost:       token rotate marquee, update lighthouse.token.marquee
+  Who can read a key?         info shared.tmdb-api-key
+
+Lighthouse itself: token create lighthouse --allow * (read-only: it can
+deploy everything but change nothing), then bootstrap open lighthouse.`
 
 const patternsGuide = `How token patterns match keys
 
