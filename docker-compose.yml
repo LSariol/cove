@@ -13,8 +13,11 @@ services:
       - APP_ENV_PATH=/app/vault/.env
       - APP_MARKER_PATH=/app/vault/markers
     container_name: cove
-    ports:
-      - "2100:2100"
+    # No published port: only containers on the spark network can reach Cove,
+    # at http://cove:2100. Nothing on the LAN can connect. The CLI doesn't
+    # need a port either (docker exec). If something on the server itself,
+    # outside Docker, ever needs Cove, publish it to this machine only:
+    #   ports: ["127.0.0.1:2100:2100"]
     volumes:
       - type: bind
         source: /srv/server/storage/cove/.env

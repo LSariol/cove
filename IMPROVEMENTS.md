@@ -4,7 +4,7 @@ A review of Cove v0.2.0: bugs, security concerns, and quality-of-life improvemen
 
 CoveClient has its own `IMPROVEMENTS.md`. Items that affect both repos are cross-referenced.
 
-> **Progress (v1.0.0, `release/1.0.0`):** most items are done; they're marked **Done** in the tables below, and the details sections are kept as the record of why. Still open: SEC-3 (network exposure; needs a decision about how clients reach Cove), SEC-11 (rate limiting), SEC-12 and QOL-9 (encryption key rotation), QOL-8 (batch fetch), and hidden value entry from QOL-2. Unfamiliar terms are explained in the [Glossary](#10-glossary).
+> **Progress (v1.0.0, `release/1.0.0`):** most items are done; they're marked **Done** in the tables below, and the details sections are kept as the record of why. Still open: SEC-11 (rate limiting), SEC-12 and QOL-9 (encryption key rotation), QOL-8 (batch fetch), and hidden value entry from QOL-2. Unfamiliar terms are explained in the [Glossary](#10-glossary).
 
 ---
 
@@ -59,7 +59,7 @@ With these rules, no project should need an immediate update.
 |---|---|---|---|---|---|
 | [SEC-1](#sec-1-secret-values-end-up-in-docker-logs) | Secret values end up in Docker logs (CLI via TTY) — **Done** | **High** | M | High | Safe |
 | [SEC-2](#sec-2-bootstrap-endpoint-hands-out-the-master-token-with-few-safeguards) | Bootstrap hands out the master token with few safeguards — **Done** | **High** | M | High | Safe/Opt-in |
-| [SEC-3](#sec-3-api-published-on-every-host-interface-over-plain-http) | API published on every host interface over plain HTTP | **High**\* | S | High | Care |
+| [SEC-3](#sec-3-api-published-on-every-host-interface-over-plain-http) | API published on every host interface over plain HTTP — **Done** | **High**\* | S | High | Care |
 | [SEC-4](#sec-4-one-shared-master-token-for-every-app) | One shared master token for every app — **Done** | Medium | XL | High | Opt-in |
 | [SEC-5](#sec-5-example-placeholder-becomes-a-real-vault-key) | Example placeholder `Kept Empty` becomes a real vault key — **Done** | Medium | S | Medium | Safe |
 | [SEC-6](#sec-6-event-log-keeps-every-value-forever) | Event log keeps every value forever (including deleted ones and a copy per read) — **Done** | Medium | M | Medium | Safe |

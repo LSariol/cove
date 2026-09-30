@@ -148,7 +148,7 @@ The included `docker-compose.yml` mounts external volumes for the `.env` file an
    COVE_VERSION=$(git describe --tags --always) docker compose up -d
    ```
 
-   The container exposes port `2100` and restarts automatically unless stopped. A health check polls `/v0/ready` (which checks the database) every 10 seconds.
+   Cove isn't published on any host port: other containers on the `spark` network reach it at `http://cove:2100`, and nothing on your LAN can connect. It restarts automatically unless stopped. A health check polls `/v0/ready` (which checks the database) every 10 seconds.
 
 4. To use the CLI inside the running container:
    ```bash

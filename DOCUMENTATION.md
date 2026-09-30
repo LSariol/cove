@@ -569,7 +569,7 @@ Two-stage build: `golang:1.25.1-alpine` builds a static binary, then it's copied
 
 | Setting | Value |
 |---|---|
-| Port | `2100:2100` |
+| Port | **Not published.** Only containers on `spark` can reach Cove, at `http://cove:2100`; nothing on the LAN can connect. The CLI uses `docker exec`, which needs no port. |
 | Network | `spark` (external, must already exist) |
 | `.env` | `/srv/server/storage/cove/.env` → `/app/vault/.env` (**read-only**) |
 | Markers | `/srv/server/storage/cove/markers` → `/app/vault/markers` |
@@ -658,7 +658,15 @@ If something was missed, the project gets `403 forbidden_key` naming the key; `t
 
 ### Network exposure
 
-Cove speaks plain HTTP and has no rate limiting. Keep it on the internal Docker network or LAN. If it has to be reachable from outside, put it behind a TLS reverse proxy (Caddy, Nginx, Traefik).
+Cove publishes no port: it's reachable only from containers on the `spark` Docker network, at `http://cove:2100`. That traffic never leaves the server, so plain HTTP is fine there, and nothing on your LAN (or beyond) can even try a token.
+
+- **Every client uses `http://cove:2100`.** A project on another Docker network must join `spark`.
+- **Something on the server itself, outside Docker,** can be given access with `ports: ["127.0.0.1:2100:2100"]`, which only that machine can reach; from elsewhere, use an SSH tunnel (`ssh -L 2100:127.0.0.1:2100 server`).
+- **Never publish Cove on all interfaces** (`"2100:2100"`) or to the internet. If it ever has to cross a network, put it behind a TLS reverse proxy (Caddy, Nginx, Traefik) with an allowlist.
+
+### Entering secret values
+
+Nothing typed at the `cove>` prompt reaches `docker logs`, and its up-arrow history is kept in memory only. A **one-shot** command is different: `docker exec cove /cove create KEY value` puts the value in your server's shell history (`~/.bash_history`). So enter values inside `docker exec -it cove /cove shell`, or use `generate` so you never type the value at all.
 
 ---
 
