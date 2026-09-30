@@ -210,23 +210,14 @@ func (c *CLI) search(ctx context.Context, args []string) error {
 	return c.printSecrets(ctx, args[1], "fuzzy")
 }
 
-// list also accepts the older `list <text> fuzzy` (or `f`) form of search.
 func (c *CLI) list(ctx context.Context, args []string) error {
-	const form = "list [prefix]   (to match anywhere in the key: search <text>)"
-
 	switch len(args) {
 	case 1:
 		return c.printSecrets(ctx, "", "all")
 	case 2:
 		return c.printSecrets(ctx, args[1], "prefix")
-	case 3:
-		mode := strings.ToLower(args[2])
-		if mode != "fuzzy" && mode != "f" {
-			return usageError{reason: fmt.Sprintf("Unknown list option %q.", args[2]), form: form}
-		}
-		return c.printSecrets(ctx, args[1], "fuzzy")
 	default:
-		return usageError{form: form}
+		return usageError{form: "list [prefix]   (to match anywhere in the key: search <text>)"}
 	}
 }
 

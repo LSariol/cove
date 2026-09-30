@@ -25,7 +25,7 @@ func (c *CLI) bootstrapCmd(ctx context.Context, args []string) error {
 	}
 
 	switch strings.ToLower(args[1]) {
-	case "open", "clear": // clear is the v0.2.0 name
+	case "open":
 		window := bootstrap.DefaultWindow
 		project := ""
 		if len(args) > 4 {

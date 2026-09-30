@@ -20,7 +20,6 @@ func TestSearchAndListFilters(t *testing.T) {
 	}{
 		{[]string{"search", "db_url"}, []string{"MYAPP_DB_URL", "OTHER_DB_URL"}, []string{"MYAPP_TOKEN"}},
 		{[]string{"list", "myapp"}, []string{"MYAPP_DB_URL", "MYAPP_TOKEN"}, []string{"OTHER_DB_URL"}},
-		{[]string{"list", "db", "fuzzy"}, []string{"MYAPP_DB_URL", "OTHER_DB_URL"}, []string{"MYAPP_TOKEN"}}, // older form still works
 	}
 
 	for _, tc := range cases {

@@ -225,7 +225,7 @@ func commandTable(embedded bool) []command {
 					"      can fetch it without credentials. The project's current token stops working.\n" +
 					"      It closes after one successful handout."},
 				{forms: []string{"open [duration]"}, help: "The same, but hands out the master token (COVE_CLIENT_SECRET), which can\n" +
-					"      reach every secret. (Also: bootstrap clear.)"},
+					"      reach every secret."},
 				{forms: []string{"lock"}, help: "Closes the bootstrap endpoint now."},
 				{forms: []string{"status", ""}, help: "Shows whether it's open, which token it hands out, the last handout, and\n" +
 					"      which addresses may use it."},

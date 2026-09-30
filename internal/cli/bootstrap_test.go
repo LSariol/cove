@@ -32,8 +32,8 @@ func TestBootstrapCommands(t *testing.T) {
 		t.Fatalf("status after open = %q", o)
 	}
 
-	if _, e, err := run("clear", "30m"); err != nil || !strings.Contains(e, "(30m0s)") {
-		t.Fatalf("bootstrap clear 30m (the old name) = %q, %v", e, err)
+	if _, e, err := run("open", "30m"); err != nil || !strings.Contains(e, "(30m0s)") {
+		t.Fatalf("bootstrap open 30m = %q, %v", e, err)
 	}
 
 	if _, _, err := run("lock"); err != nil {
