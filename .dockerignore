@@ -1,7 +1,15 @@
+# Only the Go source is needed to build Cove. In particular, never send
+# secrets or local state into the build.
+.env
+.env.*
+markers
+vault.json
 
+.git
+.github
+.vscode
+*.md
+docker-compose.yml
+Dockerfile
+.dockerignore
 .gitignore
-
-# local configs
-.env.example
-<!-- .env
-vault.json -->
