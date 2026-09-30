@@ -10,6 +10,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"strings"
 	"time"
 
 	"github.com/LSariol/Cove/internal/database"
@@ -148,6 +149,86 @@ func (v *Vault) read(ctx context.Context, key string, source string, countRead b
 		return Secret{}, err
 	}
 	return secret, nil
+}
+
+// MissingError is returned by GetMany when some keys don't exist. Keys lists
+// all of them, in the order asked for. It matches ErrNotFound.
+type MissingError struct {
+	Keys []string
+}
+
+func (e *MissingError) Error() string {
+	return fmt.Sprintf("no secret named %s", strings.Join(e.Keys, ", "))
+}
+
+func (e *MissingError) Is(target error) bool { return target == ErrNotFound }
+
+// GetMany returns several secrets with their decrypted values, in the order
+// asked for (duplicates once), and counts each as a read. It's all or
+// nothing: if any key is missing it returns a *MissingError naming every
+// missing key, and if any value can't be decrypted it fails; either way no
+// read is counted or logged.
+func (v *Vault) GetMany(ctx context.Context, keys []string, source string) ([]Secret, error) {
+	keys = dedupe(keys)
+	var secrets []Secret
+
+	err := v.store.WithinTx(ctx, func(tx Store) error {
+		secrets = make([]Secret, 0, len(keys))
+		var missing []string
+
+		for _, key := range keys {
+			s, err := tx.ReadSecret(ctx, key)
+			if errors.Is(err, ErrNotFound) {
+				missing = append(missing, key)
+				continue
+			}
+			if err != nil {
+				return err
+			}
+			if len(missing) > 0 {
+				continue // failing anyway; just find the other missing keys
+			}
+
+			value, err := v.cipher.Decrypt(s.EncryptedValue)
+			if err != nil {
+				return fmt.Errorf("get secret %q: %w (%v)", key, ErrDecrypt, err)
+			}
+			secret := fromRow(s)
+			secret.Value = value
+			secrets = append(secrets, secret)
+
+			if err := logEvent(ctx, tx, database.EventLogInput{
+				SecretID:      s.ID,
+				SecretKey:     s.Key,
+				SecretVersion: s.Version,
+				Kind:          database.EventRead,
+				Source:        source,
+			}); err != nil {
+				return err
+			}
+		}
+
+		if len(missing) > 0 {
+			return &MissingError{Keys: missing}
+		}
+		return nil
+	})
+	if err != nil {
+		return nil, err
+	}
+	return secrets, nil
+}
+
+func dedupe(keys []string) []string {
+	seen := make(map[string]bool, len(keys))
+	out := make([]string, 0, len(keys))
+	for _, k := range keys {
+		if !seen[k] {
+			seen[k] = true
+			out = append(out, k)
+		}
+	}
+	return out
 }
 
 // List returns every secret without values, ordered by key.
