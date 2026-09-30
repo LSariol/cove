@@ -53,12 +53,17 @@ func TestHelpForOneCommand(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if !strings.Contains(o, "delete, d <key> [--yes]") || strings.Contains(o, "get, g") {
-		t.Errorf("help delete = %q", o)
+	for _, want := range []string{"delete (d): Delete a secret", "Usage:", "  delete <key>   ", "Flags:", "  --yes          ", "Examples:"} {
+		if !strings.Contains(o, want) {
+			t.Errorf("help delete is missing %q:\n%s", want, o)
+		}
+	}
+	if strings.Contains(o, "get <key>") {
+		t.Errorf("help delete shows other commands:\n%s", o)
 	}
 
 	o, _ = helpOutput(t, c, "token")
-	for _, want := range []string{"token, t create <name>", "Examples:", "token allow SHARED_OPENAI_API_KEY botsuite marquee", `"help patterns"`} {
+	for _, want := range []string{"token (t): Per-project access", "token create <name>", "--allow <pattern>", "token allow SHARED_OPENAI_API_KEY botsuite marquee", `"help patterns"`} {
 		if !strings.Contains(o, want) {
 			t.Errorf("help token is missing %q:\n%s", want, o)
 		}
@@ -72,6 +77,49 @@ func TestHelpForOneCommand(t *testing.T) {
 	if _, err := helpOutput(t, c, "nope"); err == nil {
 		t.Error("help for an unknown command returned no error")
 	}
+}
+
+// Every help page fits in 80 columns, descriptions in a block start in the
+// same column, and example notes never wrap onto a second line.
+func TestHelpLayout(t *testing.T) {
+	c, _ := newTestCLI(t, "")
+	for _, cmd := range c.commands {
+		o, err := helpOutput(t, c, cmd.names[0])
+		if err != nil {
+			t.Fatal(err)
+		}
+		for _, line := range strings.Split(o, "\n") {
+			if len([]rune(line)) > helpWidth {
+				t.Errorf("help %s: line longer than %d:\n%s", cmd.names[0], helpWidth, line)
+			}
+		}
+		for _, e := range cmd.examples {
+			if !strings.Contains(o, e.note) {
+				t.Errorf("help %s: the note %q wraps onto another line:\n%s", cmd.names[0], e.note, o)
+			}
+		}
+		// Usage and flag descriptions start in one column.
+		usageAndFlags, _, _ := strings.Cut(o, "\nExamples:")
+		starts := map[int]bool{}
+		for _, u := range append(append([]usage{}, cmd.usages...), flagsAsUsages(cmd.flags)...) {
+			for _, line := range strings.Split(usageAndFlags, "\n") {
+				if strings.HasPrefix(line, "  "+u.form+"   ") { // a description is at least 3 spaces after its form
+					starts[len(line)-len(strings.TrimLeft(line[2+len(u.form):], " "))] = true
+				}
+			}
+		}
+		if len(starts) > 1 {
+			t.Errorf("help %s: usage and flag descriptions start in %d different columns:\n%s", cmd.names[0], len(starts), o)
+		}
+	}
+}
+
+func flagsAsUsages(flags []flag) []usage {
+	var us []usage
+	for _, f := range flags {
+		us = append(us, usage{form: f.name, help: f.help})
+	}
+	return us
 }
 
 func TestHelpGuides(t *testing.T) {

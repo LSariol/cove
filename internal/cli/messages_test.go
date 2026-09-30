@@ -31,10 +31,8 @@ func TestHelpUsesKeyAndValue(t *testing.T) {
 	c := New(nil, nil, Options{})
 	for _, cmd := range c.commands {
 		for _, u := range cmd.usages {
-			for _, form := range u.forms {
-				if strings.Contains(form, "<secret") || strings.Contains(form, "_value") {
-					t.Errorf("%s uses old placeholder %q", cmd.names[0], form)
-				}
+			if strings.Contains(u.form, "<secret") || strings.Contains(u.form, "_value") {
+				t.Errorf("%s uses old placeholder %q", cmd.names[0], u.form)
 			}
 		}
 	}

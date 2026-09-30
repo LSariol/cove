@@ -44,8 +44,8 @@ func TestExitHelpDependsOnMode(t *testing.T) {
 		embedded bool
 		want     string
 	}{
-		{true, "Stops Cove"},
-		{false, "Leaves the shell"},
+		{true, "Stop Cove"},
+		{false, "Leave the shell"},
 	} {
 		c := New(nil, nil, Options{Embedded: tc.embedded})
 		if got := c.byName["exit"].usages[0].help; !strings.HasPrefix(got, tc.want) {

@@ -18,8 +18,10 @@ type command struct {
 	synopsis string
 	summary  string
 
-	usages   []usage  // every way to call it, shown by `help <command>`
-	examples []string // shown by `help <command>`
+	// What `help <command>` shows, each as aligned columns.
+	usages   []usage
+	flags    []flag
+	examples []example
 
 	run func(c *CLI, ctx context.Context, args []string) error
 
@@ -28,10 +30,23 @@ type command struct {
 	complete func(c *CLI) []string
 }
 
-// usage is one way to call a command, shown by `help <command>`.
+// usage is one way to call a command: the full form, e.g. "get <key>", and
+// what it does.
 type usage struct {
-	forms []string // arguments after the command name; empty means none
-	help  string
+	form string
+	help string
+}
+
+// flag is an option a command takes, e.g. "--yes".
+type flag struct {
+	name string
+	help string
+}
+
+// example is a command line and a short note on what it does.
+type example struct {
+	line string
+	note string
 }
 
 // usageError is returned when a command is called with the wrong arguments.
@@ -60,10 +75,11 @@ var groupOrder = []string{groupSecrets, groupFind, groupAccess, groupAdmin}
 // commandTable lists every command. Adding a command here makes it available
 // at the prompt and in the help text.
 func commandTable(embedded bool) []command {
-	exitHelp, exitSummary := "Leaves the shell.", "Leave the shell"
+	exitHelp := "Leave the shell. Cove keeps running."
 	if embedded {
-		exitHelp, exitSummary = "Stops Cove, including the API server.", "Stop Cove, including the API server"
+		exitHelp = "Stop Cove, including the API server."
 	}
+	yes := flag{"--yes", "Don't ask for confirmation (for scripts)."}
 
 	return []command{
 		{
@@ -71,8 +87,12 @@ func commandTable(embedded bool) []command {
 			group:    groupSecrets,
 			synopsis: "<key>",
 			summary:  "Show a secret's value",
-			usages:   []usage{{forms: []string{"<key>"}, help: "Shows the decrypted value of a secret."}},
-			examples: []string{"get LIGHTHOUSE_GITHUB_TOKEN"},
+			usages: []usage{
+				{"get <key>", "Show a secret's decrypted value. It's logged, but not counted as an app read."},
+			},
+			examples: []example{
+				{"get LIGHTHOUSE_GITHUB_TOKEN", "print the value"},
+			},
 			run:      (*CLI).get,
 			complete: (*CLI).keyNames,
 		},
@@ -81,11 +101,12 @@ func commandTable(embedded bool) []command {
 			group:    groupSecrets,
 			synopsis: "<key> <value>",
 			summary:  "Add a secret",
-			usages: []usage{{forms: []string{"<key> <value>"}, help: "Creates a new secret. Afterwards it says which project tokens can read it,\n" +
-				"      and how to give one access if none can."}},
-			examples: []string{
-				"create LIGHTHOUSE_GITHUB_TOKEN ghp_xxxx",
-				"create SHARED_TMDB_API_KEY xxxx        then: token allow SHARED_TMDB_API_KEY botsuite marquee",
+			usages: []usage{
+				{"create <key> <value>", "Create a secret. Then it says which project tokens can read it, or how to give one access."},
+			},
+			examples: []example{
+				{"create MARQUEE_TMDB_API_KEY abc123", "a project's own key"},
+				{"create SHARED_TMDB_API_KEY abc123", "a shared key (then: token allow)"},
 			},
 			run: (*CLI).create,
 		},
@@ -94,8 +115,12 @@ func commandTable(embedded bool) []command {
 			group:    groupSecrets,
 			synopsis: "<key> <value>",
 			summary:  "Change a secret's value",
-			usages:   []usage{{forms: []string{"<key> <value>"}, help: "Replaces a secret's value and increases its version."}},
-			examples: []string{"update SHARED_TMDB_API_KEY new-value"},
+			usages: []usage{
+				{"update <key> <value>", "Replace a secret's value; its version goes up by one. Redeploy the projects that use it."},
+			},
+			examples: []example{
+				{"update SHARED_TMDB_API_KEY newvalue", "change the value"},
+			},
 			run:      (*CLI).update,
 			complete: (*CLI).keyNames,
 		},
@@ -104,12 +129,14 @@ func commandTable(embedded bool) []command {
 			group:    groupSecrets,
 			synopsis: "<key> [length]",
 			summary:  "Add or replace a secret with a random value",
-			usages: []usage{{
-				forms: []string{"<key> [length] [--yes]"},
-				help: "Creates a secret with a random value (letters and digits, 32 characters\n" +
-					"      unless given) and shows it. If the key exists, asks before replacing its value.",
-			}},
-			examples: []string{"generate MARQUEE_SESSION_SECRET 64"},
+			usages: []usage{
+				{"generate <key> [length]", "Create a secret with a random value (letters and digits; 32 characters, or 16 to 256) and show it once. If the key exists, ask before replacing its value."},
+			},
+			flags: []flag{yes},
+			examples: []example{
+				{"generate MARQUEE_SESSION_SECRET", "32 random characters"},
+				{"generate MARQUEE_SESSION_SECRET 64", "64 random characters"},
+			},
 			run:      (*CLI).generate,
 			complete: (*CLI).keyNames,
 		},
@@ -118,7 +145,14 @@ func commandTable(embedded bool) []command {
 			group:    groupSecrets,
 			synopsis: "<key>",
 			summary:  "Delete a secret (can be restored)",
-			usages:   []usage{{forms: []string{"<key> [--yes]"}, help: "Deletes a secret. Asks for confirmation unless --yes is given.\n      Warns which project tokens list the key."}},
+			usages: []usage{
+				{"delete <key>", "Delete a secret; restore brings it back. Asks first, and warns which project tokens list the key."},
+			},
+			flags: []flag{yes},
+			examples: []example{
+				{"delete MARQUEE_OLD_API_KEY", "asks first"},
+				{"delete MARQUEE_OLD_API_KEY --yes", "no question"},
+			},
 			run:      (*CLI).delete,
 			complete: (*CLI).keyNames,
 		},
@@ -127,10 +161,13 @@ func commandTable(embedded bool) []command {
 			group:    groupSecrets,
 			synopsis: "<key> <new-key>",
 			summary:  "Rename a secret, keeping its history",
-			usages: []usage{{forms: []string{"<key> <new-key> [--yes]"}, help: "Renames a secret, keeping its value, version and history.\n" +
-				"      Apps using the old key stop finding it. Tokens that list the key by name\n" +
-				"      are updated too (asks first unless --yes is given)."}},
-			examples: []string{"rename tmdb.api-key SHARED_TMDB_API_KEY       bring an old key into the naming standard"},
+			usages: []usage{
+				{"rename <key> <new-key>", "Rename a secret, keeping its value, version and history. Projects asking for the old name stop finding it. Offers to update tokens that list the key."},
+			},
+			flags: []flag{{"--yes", "Update those tokens without asking."}},
+			examples: []example{
+				{"rename tmdb.api-key SHARED_TMDB_API_KEY", "move a key to the naming standard"},
+			},
 			run:      (*CLI).rename,
 			complete: (*CLI).keyNames,
 		},
@@ -140,9 +177,13 @@ func commandTable(embedded bool) []command {
 			synopsis: "<key> [version]",
 			summary:  "Bring back an earlier or deleted value",
 			usages: []usage{
-				{forms: []string{"<key> [--yes]"}, help: "Brings back the value before the current one, or a deleted secret's last value."},
-				{forms: []string{"<key> <version> [--yes]"}, help: "Brings back the value from that version (see \"history <key>\").\n" +
-					"      The restored value is saved as a new version, so nothing is lost."},
+				{"restore <key>", "Bring back the value before the current one, or a deleted secret's last value."},
+				{"restore <key> <version>", "Bring back the value from that version (history shows them). Either way it's saved as a new version, so nothing is lost."},
+			},
+			flags: []flag{{"--yes", "Replace the current value without asking."}},
+			examples: []example{
+				{"restore MARQUEE_TMDB_API_KEY", "undo the last change"},
+				{"restore MARQUEE_TMDB_API_KEY 2", "go back to version 2"},
 			},
 			run:      (*CLI).restore,
 			complete: (*CLI).keyNames,
@@ -153,27 +194,39 @@ func commandTable(embedded bool) []command {
 			synopsis: "[prefix]",
 			summary:  "List secrets (never values)",
 			usages: []usage{
-				{help: "Lists every secret's name and details. Values are never shown."},
-				{forms: []string{"<prefix>"}, help: "Lists secrets whose keys start with <prefix>."},
+				{"list", "List every secret with its version, reads and dates. Never shows values."},
+				{"list <prefix>", "Only keys starting with <prefix> (not case-sensitive)."},
 			},
-			examples: []string{"list", "list marquee."},
-			run:      (*CLI).list,
+			examples: []example{
+				{"list", "everything"},
+				{"list MARQUEE_", "one project's keys"},
+			},
+			run: (*CLI).list,
 		},
 		{
 			names:    []string{"search", "s"},
 			group:    groupFind,
 			synopsis: "<text>",
 			summary:  "List secrets whose keys contain <text>",
-			usages:   []usage{{forms: []string{"<text>"}, help: "Lists secrets whose keys contain <text> (not case-sensitive)."}},
-			run:      (*CLI).search,
+			usages: []usage{
+				{"search <text>", "List secrets whose keys contain <text> (not case-sensitive)."},
+			},
+			examples: []example{
+				{"search TWITCH", "every Twitch key, in any project"},
+			},
+			run: (*CLI).search,
 		},
 		{
 			names:    []string{"info", "i"},
 			group:    groupFind,
 			synopsis: "<key>",
 			summary:  "A secret's details, and which projects can read it",
-			usages: []usage{{forms: []string{"<key>"}, help: "Shows a secret's details, when it was last read, and which project tokens\n" +
-				"      can read it. Never shows the value."}},
+			usages: []usage{
+				{"info <key>", "Show a secret's details, when and by whom it was last read, and which project tokens can read it. Never shows the value."},
+			},
+			examples: []example{
+				{"info SHARED_TMDB_API_KEY", "who can read a shared key"},
+			},
 			run:      (*CLI).info,
 			complete: (*CLI).keyNames,
 		},
@@ -182,7 +235,13 @@ func commandTable(embedded bool) []command {
 			group:    groupFind,
 			synopsis: "<key> [count]",
 			summary:  "A secret's recent events, and by which project",
-			usages:   []usage{{forms: []string{"<key> [count]"}, help: "Shows a secret's recent events (default 20): created, read, updated, deleted,\n      and by which app. Works for deleted secrets too. Never shows values."}},
+			usages: []usage{
+				{"history <key> [count]", "Show a secret's recent events (20 unless given): created, read, updated, deleted, renamed, and by whom. Works for deleted secrets too. Never shows values."},
+			},
+			examples: []example{
+				{"history MARQUEE_DATABASE_URL", "the last 20 events"},
+				{"history MARQUEE_DATABASE_URL 100", "the last 100"},
+			},
 			run:      (*CLI).history,
 			complete: (*CLI).keyNames,
 		},
@@ -192,24 +251,28 @@ func commandTable(embedded bool) []command {
 			synopsis: "<action> ...",
 			summary:  "Per-project access: create, show, allow, deny, rotate, revoke",
 			usages: []usage{
-				{forms: []string{"list", ""}, help: "Lists the per-project tokens and what each can reach."},
-				{forms: []string{"create <name> [--allow <pattern>]... [--write <pattern>]..."}, help: "Creates a token for a project and shows it once. --allow lets it read\n" +
-					"      matching secrets; --write also lets it create, update and delete them.\n" +
-					"      (See \"help patterns\".)"},
-				{forms: []string{"show <name>"}, help: "Shows a token's patterns, the secrets it can reach now, and recent changes."},
-				{forms: []string{"allow <pattern> <name>... [--write]"}, help: "Lets one or more tokens read (or, with --write, change) a key or pattern."},
-				{forms: []string{"deny <pattern> <name>..."}, help: "Removes a key or pattern from one or more tokens."},
-				{forms: []string{"rotate <name> [--yes]"}, help: "Gives a token a new value with the same access. The old one stops working."},
-				{forms: []string{"revoke <name> [--yes]"}, help: "Deletes a token. The project can't reach Cove until it gets a new one."},
+				{"token [list]", "List the project tokens and what each can reach."},
+				{"token create <name>", "Create a token for a project and print it; it's shown only once. Give it access with --allow and --write (see \"help patterns\")."},
+				{"token show <name>", "Show a token's patterns, the secrets it can reach now, and its recent changes."},
+				{"token allow <pattern> <name>...", "Let one or more tokens read a key or pattern (with --write, also change it)."},
+				{"token deny <pattern> <name>...", "Remove a key or pattern from one or more tokens."},
+				{"token rotate <name>", "Give a token a new value with the same access. The old one stops working."},
+				{"token revoke <name>", "Delete a token. The project can't reach Cove until it gets a new one."},
 			},
-			examples: []string{
-				"token create lighthouse --allow *                    Lighthouse: read-only over everything",
-				"token create marquee --allow MARQUEE_*",
-				"token create botsuite --allow BOTSUITE_* --allow SHARED_TMDB_API_KEY",
-				"token allow SHARED_OPENAI_API_KEY botsuite marquee     share a key with two projects",
-				"token allow BOTSUITE_TWITCH_ACCESS_TOKEN botsuite --write   let botsuite update its Twitch token",
-				"token deny SHARED_OPENAI_API_KEY marquee",
-				"token show marquee                                 what can marquee reach?",
+			flags: []flag{
+				{"--allow <pattern>", "create: let the token read matching secrets. Repeatable."},
+				{"--write <pattern>", "create: also let it create, update and delete them. Repeatable."},
+				{"--write", "allow: grant change access, not just read."},
+				{"--yes", "rotate, revoke: don't ask for confirmation."},
+			},
+			examples: []example{
+				{"token create marquee --allow 'MARQUEE_*'", "a project that reads its own keys"},
+				{"token create lighthouse --allow '*'", "Lighthouse: read-only, every key"},
+				{"token allow BOTSUITE_TWITCH_ACCESS_TOKEN botsuite --write", "botsuite may update its Twitch key"},
+				{"token allow SHARED_OPENAI_API_KEY botsuite marquee", "share a key with two projects"},
+				{"token deny SHARED_OPENAI_API_KEY marquee", "take it away from one"},
+				{"token show marquee", "what can marquee reach?"},
+				{"token rotate marquee", "a new token after a leak"},
 			},
 			run:      (*CLI).tokenCmd,
 			complete: tokenCompletions,
@@ -220,17 +283,16 @@ func commandTable(embedded bool) []command {
 			synopsis: "open|lock|status",
 			summary:  "Let a new client fetch its token once",
 			usages: []usage{
-				{forms: []string{"open <project> [duration]"}, help: "Opens the bootstrap endpoint for 10 minutes (or the given duration, e.g. 30m)\n" +
-					"      to hand out a new token for that project, so a new client (e.g. Lighthouse)\n" +
-					"      can fetch it without credentials. The project's current token stops working.\n" +
-					"      It closes after one successful handout."},
-				{forms: []string{"open [duration]"}, help: "The same, but hands out the master token (COVE_CLIENT_SECRET), which can\n" +
-					"      reach every secret."},
-				{forms: []string{"lock"}, help: "Closes the bootstrap endpoint now."},
-				{forms: []string{"status", ""}, help: "Shows whether it's open, which token it hands out, the last handout, and\n" +
-					"      which addresses may use it."},
+				{"bootstrap open <project> [duration]", "Hand out a new token for that project, once: open for 10 minutes (or a duration such as 30m, up to 24h). The project's current token stops working."},
+				{"bootstrap open [duration]", "The same, but hand out the master token (COVE_CLIENT_SECRET), which reaches every secret."},
+				{"bootstrap lock", "Close it now."},
+				{"bootstrap [status]", "Show whether it's open, which token it hands out, the last handout, recent attempts, and which addresses may use it."},
 			},
-			examples: []string{"bootstrap open lighthouse", "bootstrap status"},
+			examples: []example{
+				{"bootstrap open lighthouse", "then start Lighthouse (10 minutes)"},
+				{"bootstrap open lighthouse 30m", "a longer window"},
+				{"bootstrap status", "check it was handed out"},
+			},
 			run:      (*CLI).bootstrapCmd,
 			complete: func(*CLI) []string { return []string{"lock", "open", "status"} },
 		},
@@ -238,24 +300,36 @@ func commandTable(embedded bool) []command {
 			names:   []string{"status"},
 			group:   groupAdmin,
 			summary: "Is Cove healthy?",
-			usages:  []usage{{help: "Shows whether Cove is healthy: version, environment, database, schema,\n      number of secrets, and whether the bootstrap endpoint is open."}},
-			run:     (*CLI).status,
+			usages: []usage{
+				{"status", "Show whether Cove is healthy: version, environment, database, schema, secrets, vault key, and the bootstrap endpoint. Exits non-zero if something needs attention."},
+			},
+			run: (*CLI).status,
 		},
 		{
 			names:    []string{"help", "h"},
 			group:    groupAdmin,
 			synopsis: "[command|guide]",
 			summary:  "This overview, one command in detail, or a guide",
-			usages:   []usage{{forms: []string{"[command]", "setup", "patterns"}, help: "Shows every command, or one in detail with examples, or a step-by-step guide."}},
+			usages: []usage{
+				{"help", "List every command."},
+				{"help <command>", "Show one command in detail, with examples."},
+				{"help setup", "A step-by-step guide to setting up a new project."},
+				{"help patterns", "How token patterns (--allow, --write) match keys."},
+			},
+			examples: []example{
+				{"help token", "everything about project tokens"},
+			},
 			run:      (*CLI).help,
 			complete: (*CLI).helpTopics,
 		},
 		{
 			names:   []string{"exit", "quit"},
 			group:   groupAdmin,
-			summary: exitSummary,
-			usages:  []usage{{help: exitHelp}},
-			run:     (*CLI).exit,
+			summary: strings.TrimSuffix(strings.SplitN(exitHelp, ".", 2)[0], "."),
+			usages: []usage{
+				{"exit", exitHelp},
+			},
+			run: (*CLI).exit,
 		},
 	}
 }
@@ -407,32 +481,98 @@ func (c *CLI) overview() string {
 	return b.String()
 }
 
-// commandHelp is `help <command>`: every way to call it, then examples.
+// helpWidth is the widest line help text wraps to.
+const helpWidth = 80
+
+// commandHelp is `help <command>`: a header, then usage, flags and examples.
+// Usage and flags share one description column; examples have their own.
 func commandHelp(cmd command) string {
 	var b strings.Builder
-	names := strings.Join(cmd.names, ", ")
 
-	for i, u := range cmd.usages {
-		if i > 0 {
-			b.WriteString("\n")
-		}
-		forms := u.forms
-		if len(forms) == 0 {
-			forms = []string{""}
-		}
-		for _, form := range forms {
-			fmt.Fprintf(&b, "  %s\n", strings.TrimSpace(names+" "+form))
-		}
-		fmt.Fprintf(&b, "      %s\n", u.help)
+	header := cmd.names[0]
+	if len(cmd.names) > 1 {
+		header += " (" + strings.Join(cmd.names[1:], ", ") + ")"
+	}
+	b.WriteString(header + ": " + cmd.summary + "\n")
+
+	var usages, flags, examples [][2]string
+	for _, u := range cmd.usages {
+		usages = append(usages, [2]string{u.form, u.help})
+	}
+	for _, f := range cmd.flags {
+		flags = append(flags, [2]string{f.name, f.help})
+	}
+	for _, e := range cmd.examples {
+		examples = append(examples, [2]string{e.line, e.note})
 	}
 
-	if len(cmd.examples) > 0 {
-		b.WriteString("\nExamples:\n")
-		for _, e := range cmd.examples {
-			fmt.Fprintf(&b, "  %s\n", e)
-		}
+	width := columnWidth(append(append([][2]string{}, usages...), flags...), 36)
+	b.WriteString("\nUsage:\n" + columns(usages, width))
+	if len(flags) > 0 {
+		b.WriteString("\nFlags:\n" + columns(flags, width))
+	}
+	if len(examples) > 0 {
+		b.WriteString("\nExamples:\n" + columns(examples, columnWidth(examples, 42)))
 	}
 	return strings.TrimRight(b.String(), "\n")
+}
+
+// columnWidth is the width of the left column for rows: the longest left
+// side, not counting those longer than maxLeft (they get their own line).
+func columnWidth(rows [][2]string, maxLeft int) int {
+	width := 0
+	for _, r := range rows {
+		if len(r[0]) <= maxLeft {
+			width = max(width, len(r[0]))
+		}
+	}
+	return width
+}
+
+// columns lays out rows as two columns: the left one indented by two spaces
+// and width wide, the right one wrapped to helpWidth. A left side wider than
+// width gets its own line, with its text below it in the right column.
+func columns(rows [][2]string, width int) string {
+	col := 2 + width + 3
+	pad := strings.Repeat(" ", col)
+
+	var b strings.Builder
+	for _, r := range rows {
+		lines := wrap(r[1], helpWidth-col)
+		if len(r[0]) > width {
+			b.WriteString("  " + r[0] + "\n")
+			for _, l := range lines {
+				b.WriteString(pad + l + "\n")
+			}
+			continue
+		}
+		for i, l := range lines {
+			left := ""
+			if i == 0 {
+				left = r[0]
+			}
+			fmt.Fprintf(&b, "  %-*s   %s\n", width, left, l)
+		}
+	}
+	return b.String()
+}
+
+// wrap splits text into lines of at most width characters, at spaces.
+func wrap(text string, width int) []string {
+	var lines []string
+	line := ""
+	for _, word := range strings.Fields(text) {
+		switch {
+		case line == "":
+			line = word
+		case len(line)+1+len(word) <= width:
+			line += " " + word
+		default:
+			lines = append(lines, line)
+			line = word
+		}
+	}
+	return append(lines, line)
 }
 
 // helpTopics completes `help <Tab>`: command names and guides.
