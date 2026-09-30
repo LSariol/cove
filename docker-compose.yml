@@ -28,6 +28,15 @@ services:
     #   docker exec -it cove /cove shell     (or one command: docker exec cove /cove list)
     # No TTY is attached, so nothing typed into the CLI ends up in docker logs.
     restart: unless-stopped
+    # Take away what Cove never needs. It writes only to the markers mount;
+    # the rest of the container's filesystem is read-only.
+    read_only: true
+    tmpfs:
+      - /tmp
+    cap_drop:
+      - ALL
+    security_opt:
+      - no-new-privileges:true
     healthcheck:
       test: ["CMD", "wget", "-qO-", "http://localhost:2100/v0/ready"]
       interval: 10s
