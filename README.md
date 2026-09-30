@@ -132,7 +132,11 @@ The included `docker-compose.yml` mounts external volumes for the `.env` file an
    mkdir -p /srv/server/storage/cove/markers
    cp .env.example /srv/server/storage/cove/.env
    # Edit /srv/server/storage/cove/.env with your values
+   chmod 600 /srv/server/storage/cove/.env
+   chown -R 10001:10001 /srv/server/storage/cove
    ```
+
+   Cove runs as user `10001` inside the container, not root. The `chown` lets it read `.env` and write `markers/`; no account is needed on the host.
 
 2. Ensure the `spark` Docker network exists (or update `docker-compose.yml` to match your network):
    ```bash

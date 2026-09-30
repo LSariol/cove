@@ -559,7 +559,11 @@ VS Code: `.vscode/launch.json` has a debug configuration for `cmd/cove`.
 
 ### Image (`Dockerfile`)
 
-Two-stage build: `golang:1.25.1-alpine` builds the binary, then it's copied to `/cove` in `alpine:latest`. The working directory is `/app`. The image exposes `2100` and runs `/cove serve`. The `VERSION` build argument is stamped into the binary (compose passes `COVE_VERSION`, default `dev`).
+Two-stage build: `golang:1.25.1-alpine` builds a static binary, then it's copied to `/cove` in `alpine:3.24`. The working directory is `/app`. The image exposes `2100` and runs `/cove serve`. The `VERSION` build argument is stamped into the binary (compose passes `COVE_VERSION`, default `dev`).
+
+- **Cove runs as user `10001`, not root.** That user exists only inside the image; the host needs no account for it. But the bind-mounted files must be owned by it: run `chown -R 10001:10001 /srv/server/storage/cove` on the host once (see [First deploy](#first-deploy)). If you forget, Cove stops at startup with a "permission denied" message that includes the command. The binary itself stays owned by root, so Cove can't overwrite it.
+- **The base image is pinned** (`alpine:3.24`, which follows 3.24.x patch releases), so a rebuild gets the same base as before. Bump it on purpose.
+- **`.dockerignore` keeps `.env`, `markers/`, `.git` and the docs out of the build**, so no secrets end up in the build cache.
 
 ### Compose (`docker-compose.yml`)
 
@@ -572,6 +576,7 @@ Two-stage build: `golang:1.25.1-alpine` builds the binary, then it's copied to `
 | Command | `cove serve` (the image's default): API only, no TTY, so nothing typed into the CLI reaches `docker logs` |
 | Restart | `unless-stopped` |
 | Healthcheck | `wget -qO- http://localhost:2100/v0/ready` every 10s (unhealthy when the database is unreachable) |
+| Restrictions | `read_only: true` (the container's filesystem is read-only; Cove writes only to the markers mount, and `/tmp` is a tmpfs), `cap_drop: [ALL]` (no special Linux permissions; port 2100 doesn't need any), `no-new-privileges` (nothing in the container can gain more rights) |
 
 Because `.env` is mounted read-only, **the host `.env` must already contain `COVE_CLIENT_SECRET` and `VAULT_ENCRYPTION_KEY`**. If either is empty, Cove can't save a generated value, and stops with a message naming the setting and the file. Generate the values first (for example by running Cove locally once, or with `openssl rand -base64 36 | tr -dc 'A-Za-z0-9'`).
 
@@ -583,6 +588,7 @@ mkdir -p /srv/server/storage/cove/markers
 cp .env.example /srv/server/storage/cove/.env
 # edit it: COVE_DATABASE_URL, COVE_CLIENT_SECRET, VAULT_ENCRYPTION_KEY
 chmod 600 /srv/server/storage/cove/.env
+chown -R 10001:10001 /srv/server/storage/cove    # Cove's user in the container
 
 docker network create spark        # if it doesn't exist
 COVE_VERSION=$(git describe --tags --always) docker compose up -d --build
@@ -600,6 +606,8 @@ COVE_VERSION=$(git describe --tags --always) docker compose up -d --build
 
 State lives in Postgres and the bind mounts, so rebuilding the container is safe.
 
+If you replace or recreate the host `.env` or `markers/` (e.g. edit `.env` with a tool that writes a new file as root), run the `chown` again.
+
 ### Using the CLI in the container
 
 ```bash
@@ -608,7 +616,7 @@ docker exec cove /cove list MYAPP_     # one command
 docker exec cove /cove status          # health overview; exits non-zero if something's wrong
 ```
 
-`docker exec` sessions aren't recorded in `docker logs`, and `exit` or Ctrl+C only end the session. A handy alias on the server: `alias cove='docker exec -it cove /cove shell'`.
+`docker exec` sessions run as the same user as Cove (`10001`), aren't recorded in `docker logs`, and `exit` or Ctrl+C only end the session. A handy alias on the server: `alias cove='docker exec -it cove /cove shell'`.
 
 There's no `docker attach` CLI any more: the container runs `cove serve` without a TTY. (Plain `cove`, with the prompt on stdin, still exists for running Cove directly in a terminal.)
 
