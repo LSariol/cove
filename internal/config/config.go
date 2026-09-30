@@ -27,6 +27,10 @@ type Config struct {
 	MarkerDir          string // APP_MARKER_PATH (or APP_MARKER_DIR): bootstrap marker directory
 	Env                string // APP_ENV: "DEV" or "PROD", shown in the CLI prompt
 
+	// NewEncryptionKey (VAULT_NEW_ENCRYPTION_KEY) is only used by
+	// `cove rotate-key`: the key to re-encrypt the vault with.
+	NewEncryptionKey string
+
 	// EventLogRetentionDays (COVE_EVENT_LOG_RETENTION_DAYS) removes read events
 	// older than this many days, daily. Empty means keep everything.
 	EventLogRetentionDays string
@@ -97,6 +101,7 @@ func fromEnv(envFile string) Config {
 		MigrateDatabaseURL: os.Getenv("COVE_MIGRATE_DATABASE_URL"),
 		ClientSecret:       os.Getenv("COVE_CLIENT_SECRET"),
 		EncryptionKey:      os.Getenv("VAULT_ENCRYPTION_KEY"),
+		NewEncryptionKey:   os.Getenv("VAULT_NEW_ENCRYPTION_KEY"),
 		Port:               os.Getenv("APP_PORT"),
 		EnvPath:            os.Getenv("APP_ENV_PATH"),
 		MarkerDir:          os.Getenv("APP_MARKER_PATH"),
@@ -184,13 +189,12 @@ func (c Config) BootstrapAllowed() ([]netip.Prefix, error) {
 
 // Warnings returns problems that are risky but shouldn't stop Cove. A short
 // VAULT_ENCRYPTION_KEY is only a warning: refusing to start would lock an
-// existing vault out of its own data, and the key can't be changed without
-// re-encrypting every secret.
+// existing vault out of its own data. `cove rotate-key` replaces it.
 func (c Config) Warnings() []string {
 	var warnings []string
 	if len(c.EncryptionKey) < minSecretLength {
 		warnings = append(warnings, fmt.Sprintf("VAULT_ENCRYPTION_KEY is only %d characters; a key this short is guessable. "+
-			"For a new vault, leave it empty so Cove generates one. For an existing vault, don't change it until key rotation exists", len(c.EncryptionKey)))
+			"Replace it with `cove rotate-key` (see DOCUMENTATION.md, Rotating the vault key)", len(c.EncryptionKey)))
 	}
 	return warnings
 }

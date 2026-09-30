@@ -82,6 +82,8 @@ func (s *Server) batchHandler(w http.ResponseWriter, r *http.Request) {
 	secrets, err := s.vault.GetMany(r.Context(), body.Keys, source)
 	var missing *vault.MissingError
 	switch {
+	case wroteWrongKey(w, err):
+		return
 	case errors.As(err, &missing):
 		writeErrorWithKeys(w, http.StatusNotFound, "not_found", "no secret named "+strings.Join(missing.Keys, ", "), missing.Keys)
 		return

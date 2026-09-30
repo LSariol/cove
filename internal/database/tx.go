@@ -22,6 +22,8 @@ type Store interface {
 	ListEvents(ctx context.Context, key string, limit int) ([]Event, error)
 	LastEvent(ctx context.Context, key string, kind EventKind) (Event, bool, error)
 	ValueVersions(ctx context.Context, key string) (map[int]string, error)
+	VaultKey(ctx context.Context) (VaultKey, bool, error)
+	RecordVaultKey(ctx context.Context, fingerprint string) error
 
 	// WithinTx runs fn in a transaction: fn's changes are committed together
 	// if it returns nil, and rolled back if it returns an error.

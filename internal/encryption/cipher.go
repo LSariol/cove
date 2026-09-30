@@ -7,6 +7,7 @@ import (
 	"crypto/rand"
 	"crypto/sha256"
 	"encoding/base64"
+	"encoding/hex"
 	"errors"
 	"fmt"
 )
@@ -20,6 +21,14 @@ type Cipher struct {
 // NewCipher returns a Cipher whose key is derived from secret.
 func NewCipher(secret string) *Cipher {
 	return &Cipher{key: sha256.Sum256([]byte(secret))}
+}
+
+// Fingerprint identifies the key without revealing it: the same key always
+// gives the same fingerprint, and the key can't be worked out from it. Cove
+// stores it to notice a vault being opened with the wrong key.
+func (c *Cipher) Fingerprint() string {
+	sum := sha256.Sum256(append([]byte("cove vault key fingerprint v1:"), c.key[:]...))
+	return hex.EncodeToString(sum[:16])
 }
 
 func (c *Cipher) Encrypt(data string) (string, error) {

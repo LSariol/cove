@@ -45,6 +45,8 @@ func main() {
 		runShell()
 	case "migrate":
 		runMigrate(loadConfig(), args[1:])
+	case "rotate-key":
+		runRotateKey(loadConfig())
 	case "version":
 		fmt.Println(buildVersion())
 	case "-h", "--help":
@@ -62,6 +64,7 @@ func printUsage(w io.Writer) {
   cove <command> [args]   Run one CLI command and exit, e.g. cove get MYAPP_KEY
   cove migrate [status|up]
                           Show or apply database migrations
+  cove rotate-key         Re-encrypt the vault with VAULT_NEW_ENCRYPTION_KEY
   cove version            Print the version
 
 Run "cove help" to list the CLI commands.
@@ -99,6 +102,15 @@ func runServer(withShell bool) {
 
 	db := connect(ctx, cfg)
 	v := vault.New(db, encryption.NewCipher(cfg.EncryptionKey))
+
+	// Refuse to start with a key other than the vault's (and record it the
+	// first time).
+	if err := v.EnsureKey(ctx); err != nil {
+		err = keyError(cfg, db, err)
+		db.Close()
+		fatal(err)
+	}
+
 	gate := bootstrap.NewGate(cfg.MarkerDir, mustBootstrapAllowed(cfg))
 	tokenManager := tokens.NewManager(db)
 

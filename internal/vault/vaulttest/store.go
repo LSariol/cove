@@ -27,6 +27,37 @@ type Store struct {
 	// FailLogEvent makes LogEvent fail, to test that operations are rolled
 	// back when their event can't be recorded.
 	FailLogEvent bool
+
+	vaultKey *database.VaultKey
+}
+
+// VaultKey returns the recorded key fingerprint, like cove.vault_key.
+func (s *Store) VaultKey(ctx context.Context) (database.VaultKey, bool, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if s.vaultKey == nil {
+		return database.VaultKey{}, false, nil
+	}
+	return *s.vaultKey, true, nil
+}
+
+// RecordVaultKey records fingerprint unless one is already recorded.
+func (s *Store) RecordVaultKey(ctx context.Context, fingerprint string) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if s.vaultKey == nil {
+		s.vaultKey = &database.VaultKey{Fingerprint: fingerprint, RecordedAt: time.Now()}
+	}
+	return nil
+}
+
+// SetVaultKey replaces the recorded fingerprint, like `cove rotate-key` would
+// from another process.
+func (s *Store) SetVaultKey(fingerprint string) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	now := time.Now()
+	s.vaultKey = &database.VaultKey{Fingerprint: fingerprint, RecordedAt: now, RotatedAt: &now}
 }
 
 // ErrLogEvent is what LogEvent returns while FailLogEvent is set.

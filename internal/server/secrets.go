@@ -97,6 +97,18 @@ func (s *Server) allowed(w http.ResponseWriter, method string, tok tokens.Token,
 	}
 }
 
+// wroteWrongKey answers 500 wrong_key when err means Cove is running with a
+// different key than the vault's (usually: it was rotated while Cove was
+// running). It reports whether it answered.
+func wroteWrongKey(w http.ResponseWriter, err error) bool {
+	if !errors.Is(err, vault.ErrWrongKey) {
+		return false
+	}
+	log.Printf("%v", err)
+	writeError(w, http.StatusInternalServerError, "wrong_key", "the vault is encrypted with a different key than this Cove's; if it was just rotated, Cove must be restarted with the new VAULT_ENCRYPTION_KEY")
+	return true
+}
+
 func (s *Server) getAllSecrets(w http.ResponseWriter, r *http.Request) {
 	secrets, err := s.vault.List(r.Context())
 	if err != nil {
@@ -129,6 +141,8 @@ func (s *Server) getAllSecrets(w http.ResponseWriter, r *http.Request) {
 func (s *Server) getSecret(w http.ResponseWriter, r *http.Request, id string, source string) {
 	secret, err := s.vault.Get(r.Context(), id, source)
 	switch {
+	case wroteWrongKey(w, err):
+		return
 	case errors.Is(err, vault.ErrNotFound):
 		writeError(w, http.StatusNotFound, "not_found", "secret not found")
 		return
@@ -161,6 +175,9 @@ func (s *Server) postSecret(w http.ResponseWriter, r *http.Request, key string, 
 	}
 
 	if err := s.vault.Create(r.Context(), key, body.Value, source); err != nil {
+		if wroteWrongKey(w, err) {
+			return
+		}
 		if errors.Is(err, vault.ErrAlreadyExists) {
 			writeError(w, http.StatusConflict, "already_exists", "a secret with this key already exists; use PATCH to change its value")
 			return
@@ -189,6 +206,9 @@ func (s *Server) patchSecret(w http.ResponseWriter, r *http.Request, key string,
 	}
 
 	if _, err := s.vault.Update(r.Context(), key, body.Value, source); err != nil {
+		if wroteWrongKey(w, err) {
+			return
+		}
 		if errors.Is(err, vault.ErrNotFound) {
 			writeError(w, http.StatusNotFound, "not_found", "no secret with this key exists; use POST to create it")
 			return

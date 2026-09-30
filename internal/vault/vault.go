@@ -35,6 +35,12 @@ var (
 	// ErrNothingToRestore is returned by Restore when there's no earlier
 	// value, e.g. the secret is at version 1 or already has that value.
 	ErrNothingToRestore = errors.New("there's no earlier value to restore")
+
+	// ErrWrongKey means the vault is encrypted with a different key than
+	// VAULT_ENCRYPTION_KEY: the wrong key is configured, or the key was
+	// rotated (cove rotate-key) while this Cove was running. Nothing is
+	// written with the wrong key.
+	ErrWrongKey = errors.New("the vault is encrypted with a different key than VAULT_ENCRYPTION_KEY; if it was just rotated, restart Cove with the new key")
 )
 
 // Store is the persistence a Vault needs. *database.Database implements it.
@@ -89,14 +95,17 @@ func (v *Vault) Create(ctx context.Context, key string, value string, source str
 			return err
 		}
 
-		return logEvent(ctx, tx, database.EventLogInput{
+		if err := logEvent(ctx, tx, database.EventLogInput{
 			SecretID:          created.ID,
 			SecretKey:         created.Key,
 			SecretVersion:     created.Version,
 			Kind:              database.EventCreate,
 			Source:            source,
 			NewEncryptedValue: &created.EncryptedValue,
-		})
+		}); err != nil {
+			return err
+		}
+		return v.checkKey(ctx, tx)
 	})
 }
 
@@ -130,7 +139,7 @@ func (v *Vault) read(ctx context.Context, key string, source string, countRead b
 
 		value, err := v.cipher.Decrypt(s.EncryptedValue)
 		if err != nil {
-			return fmt.Errorf("get secret %q: %w (%v)", key, ErrDecrypt, err)
+			return v.decryptError(ctx, tx, key, err)
 		}
 
 		secret = fromRow(s)
@@ -191,7 +200,7 @@ func (v *Vault) GetMany(ctx context.Context, keys []string, source string) ([]Se
 
 			value, err := v.cipher.Decrypt(s.EncryptedValue)
 			if err != nil {
-				return fmt.Errorf("get secret %q: %w (%v)", key, ErrDecrypt, err)
+				return v.decryptError(ctx, tx, key, err)
 			}
 			secret := fromRow(s)
 			secret.Value = value
@@ -267,7 +276,7 @@ func (v *Vault) Update(ctx context.Context, key string, value string, source str
 		}
 		result = fromRow(updated)
 
-		return logEvent(ctx, tx, database.EventLogInput{
+		if err := logEvent(ctx, tx, database.EventLogInput{
 			SecretID:          updated.ID,
 			SecretKey:         updated.Key,
 			SecretVersion:     updated.Version,
@@ -275,7 +284,10 @@ func (v *Vault) Update(ctx context.Context, key string, value string, source str
 			Source:            source,
 			OldEncryptedValue: &old.EncryptedValue,
 			NewEncryptedValue: &updated.EncryptedValue,
-		})
+		}); err != nil {
+			return err
+		}
+		return v.checkKey(ctx, tx)
 	})
 	if err != nil {
 		return Secret{}, err
@@ -380,7 +392,7 @@ func (v *Vault) Restore(ctx context.Context, key string, version int, source str
 
 		value, err := v.cipher.Decrypt(encrypted)
 		if err != nil {
-			return fmt.Errorf("restore %q: %w (%v)", key, ErrDecrypt, err)
+			return v.decryptError(ctx, tx, key, err)
 		}
 		reencrypted, err := v.cipher.Encrypt(value)
 		if err != nil {
@@ -395,7 +407,7 @@ func (v *Vault) Restore(ctx context.Context, key string, version int, source str
 				return err
 			}
 			result = fromRow(updated)
-			return logEvent(ctx, tx, database.EventLogInput{
+			if err := logEvent(ctx, tx, database.EventLogInput{
 				SecretID:          updated.ID,
 				SecretKey:         updated.Key,
 				SecretVersion:     updated.Version,
@@ -404,7 +416,10 @@ func (v *Vault) Restore(ctx context.Context, key string, version int, source str
 				OldEncryptedValue: &current.EncryptedValue,
 				NewEncryptedValue: &updated.EncryptedValue,
 				Detail:            detail,
-			})
+			}); err != nil {
+				return err
+			}
+			return v.checkKey(ctx, tx)
 		}
 
 		created, err := tx.InsertSecret(ctx, key, reencrypted)
@@ -412,7 +427,7 @@ func (v *Vault) Restore(ctx context.Context, key string, version int, source str
 			return err
 		}
 		result = fromRow(created)
-		return logEvent(ctx, tx, database.EventLogInput{
+		if err := logEvent(ctx, tx, database.EventLogInput{
 			SecretID:          created.ID,
 			SecretKey:         created.Key,
 			SecretVersion:     created.Version,
@@ -420,7 +435,10 @@ func (v *Vault) Restore(ctx context.Context, key string, version int, source str
 			Source:            source,
 			NewEncryptedValue: &created.EncryptedValue,
 			Detail:            detail + " of the deleted secret",
-		})
+		}); err != nil {
+			return err
+		}
+		return v.checkKey(ctx, tx)
 	})
 	if err != nil {
 		return Secret{}, 0, err
@@ -451,6 +469,95 @@ func (v *Vault) Info(ctx context.Context, key string) (Info, error) {
 		info.LastRead = &lastRead
 	}
 	return info, nil
+}
+
+// KeyStatus describes the vault's encryption key, for `status`.
+type KeyStatus struct {
+	Fingerprint string     // of VAULT_ENCRYPTION_KEY
+	Recorded    bool       // whether the vault has recorded its key yet
+	Matches     bool       // whether it's the recorded key
+	RotatedAt   *time.Time // when the vault was last rotated, if ever
+}
+
+// KeyStatus compares VAULT_ENCRYPTION_KEY with the vault's recorded key.
+func (v *Vault) KeyStatus(ctx context.Context) (KeyStatus, error) {
+	st := KeyStatus{Fingerprint: v.cipher.Fingerprint()}
+	k, found, err := v.store.VaultKey(ctx)
+	if err != nil {
+		return st, err
+	}
+	st.Recorded, st.Matches, st.RotatedAt = found, found && k.Fingerprint == st.Fingerprint, k.RotatedAt
+	return st, nil
+}
+
+// EnsureKey makes sure VAULT_ENCRYPTION_KEY is the key the vault is
+// encrypted with. The first time (a new vault, or the first start after
+// upgrading), it checks that the key decrypts a stored secret, then records
+// its fingerprint. After that, a different key returns ErrWrongKey, so Cove
+// doesn't start with the wrong key.
+func (v *Vault) EnsureKey(ctx context.Context) error {
+	st, err := v.KeyStatus(ctx)
+	if err != nil {
+		return err
+	}
+	if st.Recorded {
+		if !st.Matches {
+			return ErrWrongKey
+		}
+		return nil
+	}
+
+	// Nothing recorded yet: make sure this key really opens the vault.
+	rows, err := v.store.ListSecrets(ctx)
+	if err != nil {
+		return err
+	}
+	if len(rows) > 0 {
+		s, err := v.store.GetSecret(ctx, rows[0].Key)
+		if err != nil {
+			return err
+		}
+		if _, err := v.cipher.Decrypt(s.EncryptedValue); err != nil {
+			return fmt.Errorf("VAULT_ENCRYPTION_KEY can't decrypt the stored secrets (tried %q): is it the right key?", s.Key)
+		}
+	}
+	if err := v.store.RecordVaultKey(ctx, st.Fingerprint); err != nil {
+		return err
+	}
+
+	// Another Cove may have recorded one at the same moment.
+	if st, err = v.KeyStatus(ctx); err != nil {
+		return err
+	}
+	if !st.Matches {
+		return ErrWrongKey
+	}
+	return nil
+}
+
+// checkKey fails a write when the vault's recorded key isn't this Cove's
+// key, e.g. because it was rotated while Cove was running. It runs at the end
+// of each write transaction, after the write has taken its locks, so it
+// always sees a rotation that committed before the write could proceed.
+func (v *Vault) checkKey(ctx context.Context, tx Store) error {
+	k, found, err := tx.VaultKey(ctx)
+	if err != nil {
+		return err
+	}
+	if found && k.Fingerprint != v.cipher.Fingerprint() {
+		return ErrWrongKey
+	}
+	return nil
+}
+
+// decryptError explains a value that can't be decrypted: the wrong key, or
+// a damaged value.
+func (v *Vault) decryptError(ctx context.Context, tx Store, key string, cause error) error {
+	if err := v.checkKey(ctx, tx); errors.Is(err, ErrWrongKey) {
+		// Still a decrypt failure, just with a known cause.
+		return fmt.Errorf("decrypt %q: %w (%w)", key, ErrWrongKey, ErrDecrypt)
+	}
+	return fmt.Errorf("get secret %q: %w (%v)", key, ErrDecrypt, cause)
 }
 
 // logEvent records an event, and explains a failure: the caller's transaction

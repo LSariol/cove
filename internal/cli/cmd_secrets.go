@@ -236,6 +236,8 @@ func secretError(action string, key string, err error) error {
 		return fmt.Errorf("No secret named %q.", key)
 	case errors.Is(err, vault.ErrAlreadyExists):
 		return fmt.Errorf("A secret named %q already exists. Use \"update\" to change its value.", key)
+	case errors.Is(err, vault.ErrWrongKey):
+		return fmt.Errorf("The vault is encrypted with a different key than this Cove's VAULT_ENCRYPTION_KEY. If it was just rotated, restart Cove with the new key.")
 	case errors.Is(err, vault.ErrDecrypt):
 		return fmt.Errorf("Couldn't decrypt %q. VAULT_ENCRYPTION_KEY may have changed since it was stored.", key)
 	default:
