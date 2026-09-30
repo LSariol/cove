@@ -49,6 +49,7 @@ func (c *CLI) generate(ctx context.Context, args []string) error {
 	if err == nil {
 		out(value)
 		success(fmt.Sprintf("Created %q with a random %d-character value.", key, length))
+		c.describeNewKeyAccess(ctx, key)
 		return nil
 	}
 	if !errors.Is(err, vault.ErrAlreadyExists) {
