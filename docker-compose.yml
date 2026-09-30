@@ -24,7 +24,7 @@ services:
         target: /app/vault/.env
         read_only: true
       - type: bind
-        source: /srv/server/storage/cove/markers   
+        source: /srv/server/storage/cove/markers
         target: /app/vault/markers
         read_only: false
     # The image runs `cove serve` (API only). For the CLI use
