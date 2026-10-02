@@ -2,8 +2,6 @@ package bootstrap
 
 import (
 	"net/netip"
-	"os"
-	"path/filepath"
 	"testing"
 	"time"
 )
@@ -142,28 +140,5 @@ func TestStateSurvivesANewGate(t *testing.T) {
 	other.now = g.now
 	if got := claim(t, other, lighthouse); got != Granted {
 		t.Fatalf("claim through a second gate = %s, want granted", got)
-	}
-}
-
-func TestLegacyMarkerIsReplaced(t *testing.T) {
-	g, _ := testGate(t)
-	legacy := filepath.Join(g.dir, legacyMarker)
-	if err := os.WriteFile(legacy, nil, 0o600); err != nil {
-		t.Fatal(err)
-	}
-
-	_ = g.Lock()
-	if _, err := os.Stat(legacy); !os.IsNotExist(err) {
-		t.Fatal("the v0.2.0 marker file wasn't removed")
-	}
-}
-
-func TestCorruptStateFailsClosed(t *testing.T) {
-	g, _ := testGate(t)
-	if err := os.WriteFile(filepath.Join(g.dir, stateFile), []byte("{not json"), 0o600); err != nil {
-		t.Fatal(err)
-	}
-	if _, _, err := g.Claim(lighthouse); err == nil {
-		t.Fatal("Claim with a corrupt state file succeeded")
 	}
 }

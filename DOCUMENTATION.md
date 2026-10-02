@@ -487,7 +487,7 @@ Only a hash of each project token is stored, so `bootstrap open <project>` gives
 
 - The address comes from the connection, never from headers.
 - Every attempt is recorded in `bootstrap_log`; refusals count toward the rate limit.
-- **State** is `<APP_MARKER_PATH>/bootstrap.json` (owner-only, written atomically): the window, the last handout, and while it can still be handed out, a project's new token, which is removed once the window and grace period are over, on `lock`, or when reopened. A missing file means closed; a corrupt one fails closed. The v0.2.0 marker file `bootstrap_completed` is removed on the next `open` or `lock`.
+- **State** is `<APP_MARKER_PATH>/bootstrap.json` (owner-only, written atomically): the window, the last handout, and while it can still be handed out, a project's new token, which is removed once the window and grace period are over, on `lock`, or when reopened. A missing file means closed; a corrupt one fails closed.
 
 ---
 

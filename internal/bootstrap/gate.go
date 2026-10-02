@@ -30,10 +30,6 @@ const (
 	GracePeriod = 2 * time.Minute
 
 	stateFile = "bootstrap.json"
-
-	// legacyMarker is the file Cove v0.2.0 used to lock the endpoint. It's
-	// removed on the next open or lock; the new state file replaces it.
-	legacyMarker = "bootstrap_completed"
 )
 
 // Outcome is the result of a request to the bootstrap endpoint.
@@ -277,7 +273,5 @@ func (g *Gate) save(st state) error {
 		os.Remove(tmp.Name())
 		return fmt.Errorf("save bootstrap state: %w", err)
 	}
-
-	_ = os.Remove(filepath.Join(g.dir, legacyMarker))
 	return nil
 }
