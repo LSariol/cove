@@ -47,12 +47,12 @@ func TestClosedByDefault(t *testing.T) {
 
 func TestOpenHandsOutOnceThenLocks(t *testing.T) {
 	g, now := testGate(t)
-	until, err := g.Open(0)
+	until, err := open(g, 0)
 	if err != nil {
 		t.Fatal(err)
 	}
 	if want := now.Add(DefaultWindow); !until.Equal(want) {
-		t.Fatalf("Open until %v, want %v (default window)", until, want)
+		t.Fatalf("open until %v, want %v (default window)", until, want)
 	}
 
 	if got := claim(t, g, lighthouse); got != Granted {
@@ -70,7 +70,7 @@ func TestOpenHandsOutOnceThenLocks(t *testing.T) {
 
 func TestGracePeriodForTheSameAddress(t *testing.T) {
 	g, now := testGate(t)
-	_, _ = g.Open(0)
+	_, _ = open(g, 0)
 	claim(t, g, lighthouse)
 
 	*now = now.Add(GracePeriod - time.Second)
@@ -89,7 +89,7 @@ func TestGracePeriodForTheSameAddress(t *testing.T) {
 
 func TestWindowExpires(t *testing.T) {
 	g, now := testGate(t)
-	_, _ = g.Open(5 * time.Minute)
+	_, _ = open(g, 5*time.Minute)
 
 	*now = now.Add(5 * time.Minute)
 	if got := claim(t, g, lighthouse); got != Expired {
@@ -102,7 +102,7 @@ func TestWindowExpires(t *testing.T) {
 
 func TestLockClosesImmediately(t *testing.T) {
 	g, _ := testGate(t)
-	_, _ = g.Open(0)
+	_, _ = open(g, 0)
 	if err := g.Lock(); err != nil {
 		t.Fatal(err)
 	}
@@ -111,7 +111,7 @@ func TestLockClosesImmediately(t *testing.T) {
 	}
 
 	// Lock also ends a grace period.
-	_, _ = g.Open(0)
+	_, _ = open(g, 0)
 	claim(t, g, lighthouse)
 	_ = g.Lock()
 	if got := claim(t, g, lighthouse); got != Locked {
@@ -121,7 +121,7 @@ func TestLockClosesImmediately(t *testing.T) {
 
 func TestAllowedNetworks(t *testing.T) {
 	g, _ := testGate(t, "172.18.0.0/16")
-	_, _ = g.Open(0)
+	_, _ = open(g, 0)
 
 	if got := claim(t, g, stranger); got != Forbidden {
 		t.Fatalf("address outside the allowed networks = %s, want forbidden", got)
@@ -133,12 +133,30 @@ func TestAllowedNetworks(t *testing.T) {
 
 func TestStateSurvivesANewGate(t *testing.T) {
 	g, _ := testGate(t)
-	_, _ = g.Open(0)
+	_, _ = open(g, 0)
 
 	// The CLI and the server are separate processes sharing the state file.
 	other := NewGate(g.dir, nil)
 	other.now = g.now
 	if got := claim(t, other, lighthouse); got != Granted {
 		t.Fatalf("claim through a second gate = %s, want granted", got)
+	}
+}
+
+// open opens g for a project token, as `bootstrap open lighthouse` does.
+func open(g *Gate, d time.Duration) (time.Time, error) {
+	return g.OpenFor(d, "lighthouse", "cove_abc")
+}
+
+func TestOpenNeedsAProjectToken(t *testing.T) {
+	g, _ := testGate(t)
+	if _, err := g.OpenFor(0, "", ""); err == nil {
+		t.Fatal("opened without a token to hand out")
+	}
+	if _, err := g.OpenFor(0, "lighthouse", ""); err == nil {
+		t.Fatal("opened for a project without its token")
+	}
+	if st, _ := g.Status(); st.Open {
+		t.Fatal("the endpoint opened anyway")
 	}
 }

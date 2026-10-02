@@ -1,6 +1,5 @@
 // Package bootstrap controls the one-time bootstrap endpoint, which hands a
-// token to a new client that has no credentials yet (e.g. Lighthouse): the
-// master token, or when opened for a project, that project's own token.
+// project its own token when it has no credentials yet (e.g. Lighthouse).
 //
 // The endpoint is closed unless someone opens it with `bootstrap open`, and
 // then only for a limited time: it closes after one successful handout, or
@@ -52,11 +51,10 @@ type Status struct {
 	LastHandoutTo string
 	GraceUntil    time.Time
 	Allowed       []netip.Prefix // empty means any address
-	TokenName     string         // the project whose token is handed out; empty for the master token
+	TokenName     string         // the project whose token is, or was last, handed out
 }
 
-// Handout is what a granted request receives: a project's token, or the
-// master token when Token is empty.
+// Handout is what a granted request receives: a project's token.
 type Handout struct {
 	TokenName string
 	Token     string
@@ -69,8 +67,8 @@ type state struct {
 	LastHandoutTo string    `json:"last_handout_to,omitzero"`
 	GraceUntil    time.Time `json:"grace_until,omitzero"`
 
-	// A project token to hand out instead of the master token. It's kept
-	// only until the window and grace period are over, then removed.
+	// The project token to hand out. It's kept only until the window and
+	// grace period are over, then removed.
 	TokenName string `json:"token_name,omitzero"`
 	Token     string `json:"token,omitzero"`
 }
@@ -91,16 +89,12 @@ func NewGate(dir string, allowed []netip.Prefix) *Gate {
 	return &Gate{dir: dir, allowed: allowed, now: time.Now}
 }
 
-// Open opens the endpoint for d (DefaultWindow if d <= 0) to hand out the
-// master token, and returns when it will close.
-func (g *Gate) Open(d time.Duration) (time.Time, error) {
-	return g.OpenFor(d, "", "")
-}
-
 // OpenFor opens the endpoint for d (DefaultWindow if d <= 0) to hand out
-// token, the named project's token, and returns when it will close. An empty
-// token means the master token.
+// token, the named project's token, and returns when it will close.
 func (g *Gate) OpenFor(d time.Duration, tokenName string, token string) (time.Time, error) {
+	if tokenName == "" || token == "" {
+		return time.Time{}, errors.New("the bootstrap endpoint needs a project and its token to hand out")
+	}
 	if d <= 0 {
 		d = DefaultWindow
 	}

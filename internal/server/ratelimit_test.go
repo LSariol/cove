@@ -120,7 +120,7 @@ func TestRefusedBootstrapsGetRateLimited(t *testing.T) {
 
 	// Even once it's opened, the blocked address can't use it (and doesn't
 	// use up the window).
-	gate.Open(0)
+	gate.OpenFor(0, "lighthouse", handoutToken)
 	code, env := api.do("GET", "/v0/bootstrap/lighthouse", "")
 	expectError(t, code, env, 429, "too_many_requests")
 	if st, _ := gate.Status(); !st.Open {

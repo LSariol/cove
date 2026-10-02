@@ -32,17 +32,6 @@ func TestOpenForHandsOutTheProjectToken(t *testing.T) {
 	}
 }
 
-func TestPlainOpenHandsOutTheMasterToken(t *testing.T) {
-	g, _ := testGate(t)
-	g.OpenFor(0, "lighthouse", "cove_abc")
-	g.Open(0) // opened again, for the master token
-
-	_, h, _ := g.Claim(lighthouse)
-	if h != (Handout{}) {
-		t.Fatalf("handout = %+v, want the master token (empty)", h)
-	}
-}
-
 // The project token is written to the state file only while someone can
 // still receive it.
 func TestProjectTokenIsRemovedFromTheStateFile(t *testing.T) {

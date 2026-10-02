@@ -12,8 +12,11 @@ import (
 
 func TestBootstrapCommands(t *testing.T) {
 	ctx := context.Background()
-	c, _ := newTestCLI(t, "")
+	c, _ := newTokenCLI(t, "")
 	c.bootstrap = bootstrap.NewGate(t.TempDir(), nil)
+	if err := c.Exec(ctx, []string{"token", "create", "lighthouse", "--allow", "*"}); err != nil {
+		t.Fatal(err)
+	}
 
 	run := func(args ...string) (string, string, error) {
 		o, e := captureOutput(t)
@@ -25,25 +28,27 @@ func TestBootstrapCommands(t *testing.T) {
 		t.Fatalf("bootstrap (status) = %q, %v", o, err)
 	}
 
-	if _, e, err := run("open"); err != nil || !strings.Contains(e, "(10m0s)") {
-		t.Fatalf("bootstrap open = %q, %v", e, err)
+	if _, e, err := run("open", "lighthouse"); err != nil || !strings.Contains(e, "(10m0s)") {
+		t.Fatalf("bootstrap open lighthouse = %q, %v", e, err)
 	}
 	if o, _, _ := run("status"); !strings.Contains(o, "open for") {
 		t.Fatalf("status after open = %q", o)
 	}
 
-	if _, e, err := run("open", "30m"); err != nil || !strings.Contains(e, "(30m0s)") {
-		t.Fatalf("bootstrap open 30m = %q, %v", e, err)
+	if _, e, err := run("open", "lighthouse", "30m"); err != nil || !strings.Contains(e, "(30m0s)") {
+		t.Fatalf("bootstrap open lighthouse 30m = %q, %v", e, err)
 	}
 
 	if _, _, err := run("lock"); err != nil {
 		t.Fatal(err)
 	}
-	if o, _, _ := run("status"); !strings.Contains(o, "Endpoint:      closed") {
+	if o, _, _ := run("status"); !strings.Contains(o, "Endpoint:      closed") || strings.Contains(o, "Hands out") {
 		t.Fatalf("status after lock = %q", o)
 	}
 
-	for _, bad := range [][]string{{"open", "5s"}, {"open", "48h"}, {"open", "soon"}, {"nope"}} {
+	// A project is required: there's no token to hand out without one.
+	bad := [][]string{{"open"}, {"open", "30m"}, {"open", "lighthouse", "5s"}, {"open", "lighthouse", "48h"}, {"open", "soon"}, {"nope"}}
+	for _, bad := range bad {
 		if _, _, err := run(bad...); err == nil {
 			t.Errorf("bootstrap %v was accepted", bad)
 		}

@@ -18,7 +18,7 @@ const (
 )
 
 func (c *CLI) bootstrapCmd(ctx context.Context, args []string) error {
-	const form = "bootstrap [open [project] [duration] | lock | status]"
+	const form = "bootstrap [open <project> [duration] | lock | status]"
 
 	if len(args) == 1 {
 		return c.bootstrapStatus(ctx)
@@ -39,20 +39,17 @@ func (c *CLI) bootstrapCmd(ctx context.Context, args []string) error {
 				window = d
 				continue
 			}
-			if project != "" || c.tokens == nil {
+			if project != "" {
 				return usageError{reason: fmt.Sprintf("%q isn't a duration from 1m to 24h (e.g. 10m, 1h).", arg), form: form}
 			}
 			project = arg
 		}
 
 		if project == "" {
-			until, err := c.bootstrap.Open(window)
-			if err != nil {
-				return fmt.Errorf("Couldn't open the bootstrap endpoint: %v", err)
-			}
-			success(fmt.Sprintf("Bootstrap endpoint open until %s (%s) to hand out the master token. It closes after one successful handout.",
-				until.Local().Format("15:04"), window))
-			return nil
+			return usageError{reason: "Name the project whose token to hand out, e.g. bootstrap open lighthouse.", form: form}
+		}
+		if c.tokens == nil {
+			return errors.New("Project tokens aren't available here.")
 		}
 		return c.bootstrapOpenFor(ctx, project, window)
 
@@ -87,7 +84,9 @@ func (c *CLI) bootstrapStatus(ctx context.Context) error {
 	}
 
 	out("Endpoint:      " + describeBootstrap(st))
-	out("Hands out:     " + describeHandout(st))
+	if st.TokenName != "" {
+		out("Hands out:     " + st.TokenName + "'s token")
+	}
 
 	lastHandout := "never"
 	if !st.LastHandoutAt.IsZero() {
@@ -150,14 +149,6 @@ func (c *CLI) bootstrapOpenFor(ctx context.Context, project string, window time.
 		until.Local().Format("15:04"), window, project))
 	warn(fmt.Sprintf("%s's previous token stopped working.", project))
 	return nil
-}
-
-// describeHandout says which token the endpoint hands out.
-func describeHandout(st bootstrap.Status) string {
-	if st.TokenName == "" {
-		return "the master token (COVE_CLIENT_SECRET)"
-	}
-	return st.TokenName + "'s token"
 }
 
 // describeBootstrap summarizes whether the endpoint is open, e.g.

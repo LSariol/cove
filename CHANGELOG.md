@@ -13,7 +13,7 @@ The first stable release: a rework of v0.2.0 for security, reliability and day-t
 - **Non-root container.** Run `sudo chown -R 10001:10001 /srv/server/storage/cove` before the first start.
 - **The container runs `cove serve`** with no TTY. The CLI is `docker exec -it cove /cove shell`; `docker attach` no longer gives a prompt.
 - **`COVE_CLIENT_SECRET` must be at least 24 characters**, or Cove won't start.
-- **The bootstrap endpoint is closed by default:** run `bootstrap open` (or `bootstrap open <project>`) when onboarding a client.
+- **The bootstrap endpoint is closed by default:** run `bootstrap open <project>` when onboarding a client. It hands out that project's own token, never the master token.
 - **Precise error statuses:** a duplicate create is `409`, updating a missing key `404`, decrypt and database failures `500`. Success codes are unchanged.
 - **The first start records the vault key.** After that, Cove refuses to start with a different `VAULT_ENCRYPTION_KEY`; change it only with `cove rotate-key`.
 - `vault.json` and `APP_VAULT_PATH` are gone; `APP_MARKER_DIR` is now only `APP_MARKER_PATH`.
@@ -27,7 +27,7 @@ The first stable release: a rework of v0.2.0 for security, reliability and day-t
 - **Vault key fingerprint:** Cove refuses to start with the wrong key, and values encrypted with two keys can never be mixed.
 - **`cove rotate-key`** re-encrypts the whole vault, history included, in one transaction.
 - **Rate limiting:** 10 failed attempts a minute from an address block it for 5 minutes.
-- **Bootstrap gate:** closed by default, one handout per opening, time-limited, optional network allowlist, every attempt logged; it can hand out a project's own token.
+- **Bootstrap gate:** closed by default, one handout per opening, time-limited, optional network allowlist, every attempt logged; it hands out a project's own token.
 - **No port published**; container runs as a non-root user with a read-only filesystem, no capabilities and no-new-privileges; base image pinned.
 - **Nothing sensitive in logs:** the CLI is no longer attached to `docker logs`; request logs never include values or tokens; read events no longer store a copy of the value.
 - **Built with Go 1.27.1** and updated dependencies, fixing 26 known vulnerabilities in Go 1.25.1, pgx and x/text.

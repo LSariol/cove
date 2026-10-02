@@ -196,17 +196,20 @@ func TestListReturnsMetadataOnly(t *testing.T) {
 	}
 }
 
+// handoutToken is the project token the bootstrap tests open the endpoint with.
+const handoutToken = "cove_lighthouse-token-for-tests"
+
 func TestBootstrapIsClosedUntilOpened(t *testing.T) {
 	api := newTestAPI(t)
 
 	code, env := api.do("GET", "/v0/bootstrap/lighthouse", "")
 	expectError(t, code, env, 403, "bootstrap_locked")
 
-	if _, err := api.gate.Open(0); err != nil {
+	if _, err := api.gate.OpenFor(0, "lighthouse", handoutToken); err != nil {
 		t.Fatal(err)
 	}
 	code, env = api.do("GET", "/v0/bootstrap/lighthouse", "")
-	if code != 200 || decode[map[string]string](t, env)["secret"] != testToken {
+	if code != 200 || decode[map[string]string](t, env)["secret"] != handoutToken {
 		t.Fatalf("bootstrap while open = %d %s", code, env.Data)
 	}
 

@@ -465,7 +465,7 @@ Why: `${...}` names must be letters, digits and `_` (Compose rejects `.` and `-`
 
 ## 10. Bootstrap
 
-The bootstrap endpoint hands a new client its token before it has any credentials. It's **closed unless you open it**.
+The bootstrap endpoint hands a project its own token before it has any credentials. It's **closed unless you open it**.
 
 ```
 cove> token create lighthouse --allow '*'   # once
@@ -474,7 +474,7 @@ cove> bootstrap open lighthouse             # open for 10 minutes (or: bootstrap
 cove> bootstrap status                      # shows the handout and recent attempts
 ```
 
-Only a hash of each project token is stored, so `bootstrap open <project>` gives the project a **new** token (its previous one stops working). Plain `bootstrap open` hands out the master token.
+Only a hash of each project token is stored, so `bootstrap open <project>` gives the project a **new** token (its previous one stops working). The master token is never handed out.
 
 | Situation | `GET /v0/bootstrap/lighthouse` |
 |---|---|

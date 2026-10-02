@@ -58,15 +58,3 @@ func TestBootstrapOpenForAnUnknownProject(t *testing.T) {
 		t.Fatal("the endpoint opened anyway")
 	}
 }
-
-func TestBootstrapOpenWithoutAProjectHandsOutTheMasterToken(t *testing.T) {
-	c, _ := newTokenCLI(t, "")
-	c.bootstrap = bootstrap.NewGate(t.TempDir(), nil)
-
-	if _, e, _ := run(t, c, "bootstrap open"); !strings.Contains(e, "to hand out the master token") {
-		t.Fatalf("stderr = %q", e)
-	}
-	if o, _, _ := run(t, c, "bootstrap status"); !strings.Contains(o, "Hands out:     the master token") {
-		t.Fatalf("status = %q", o)
-	}
-}

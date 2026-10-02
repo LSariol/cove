@@ -21,7 +21,7 @@ type DB interface {
 
 // Options are the Server's settings.
 type Options struct {
-	ClientSecret string // the master token, with access to every secret; also handed out by the bootstrap endpoint
+	ClientSecret string // the master token, with access to every secret
 	Port         string
 	Version      string // reported by /v0/version
 

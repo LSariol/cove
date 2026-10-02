@@ -284,7 +284,6 @@ func commandTable(embedded bool) []command {
 			summary:  "Let a new client fetch its token once",
 			usages: []usage{
 				{"bootstrap open <project> [duration]", "Hand out a new token for that project, once: open for 10 minutes (or a duration such as 30m, up to 24h). The project's current token stops working."},
-				{"bootstrap open [duration]", "The same, but hand out the master token (COVE_CLIENT_SECRET), which reaches every secret."},
 				{"bootstrap lock", "Close it now."},
 				{"bootstrap [status]", "Show whether it's open, which token it hands out, the last handout, recent attempts, and which addresses may use it."},
 			},

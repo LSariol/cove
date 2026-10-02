@@ -8,8 +8,8 @@ import (
 	"github.com/LSariol/Cove/internal/bootstrap"
 )
 
-// bootstrapHandler hands the client token to a new client, when the bootstrap
-// gate allows it (see package bootstrap).
+// bootstrapHandler hands a project its token, when the bootstrap gate allows
+// it (see package bootstrap).
 func (s *Server) bootstrapHandler(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodGet {
 		writeError(w, http.StatusMethodNotAllowed, "method_not_allowed", "only GET is allowed")
@@ -30,11 +30,7 @@ func (s *Server) bootstrapHandler(w http.ResponseWriter, r *http.Request) {
 	}
 	s.recordBootstrap(r, addr, string(outcome))
 
-	// A project's token, or the master token.
 	token, what := handout.Token, handout.TokenName+"'s token"
-	if token == "" {
-		token, what = s.clientSecret, "the master token"
-	}
 
 	switch outcome {
 	case bootstrap.Granted:
@@ -59,8 +55,8 @@ func (s *Server) bootstrapHandler(w http.ResponseWriter, r *http.Request) {
 	}
 
 	if token == "" {
-		log.Printf("bootstrap: COVE_CLIENT_SECRET is not configured")
-		writeError(w, http.StatusInternalServerError, "server_error", "client secret is not configured")
+		log.Printf("bootstrap: the endpoint was open without a token to hand out")
+		writeError(w, http.StatusInternalServerError, "server_error", "there is no token to hand out; run `bootstrap open <project>` again in the Cove CLI")
 		return
 	}
 
