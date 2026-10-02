@@ -3,7 +3,6 @@
 .env
 .env.*
 markers
-vault.json
 
 .git
 .github
