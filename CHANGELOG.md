@@ -4,7 +4,7 @@ All notable changes to Cove. Versions follow [semantic versioning](https://semve
 
 ## v1.0.0
 
-The first stable release: a rework of v0.2.0 for security, reliability and day-to-day use. The `/v0` API is unchanged for existing clients (CoveClient v0.2.0 keeps working), but **deploying it needs the upgrade steps below**.
+The first stable release: a rework of v0.2.0 for security, reliability and day-to-day use. The `/v0` routes and responses are unchanged, but **every client now needs its own token, and deploying it needs the upgrade steps below**. Use CoveClient v1.0.0.
 
 ### Upgrading from v0.2.0
 
@@ -12,8 +12,8 @@ The first stable release: a rework of v0.2.0 for security, reliability and day-t
 - **No published port.** Clients must use `http://cove:2100` on the `spark` network; `http://<server>:2100` stops working.
 - **Non-root container.** Run `sudo chown -R 10001:10001 /srv/server/storage/cove` before the first start.
 - **The container runs `cove serve`** with no TTY. The CLI is `docker exec -it cove /cove shell`; `docker attach` no longer gives a prompt.
-- **`COVE_CLIENT_SECRET` must be at least 24 characters**, or Cove won't start.
-- **The bootstrap endpoint is closed by default:** run `bootstrap open <project>` when onboarding a client. It hands out that project's own token, never the master token.
+- **The master token is gone.** `COVE_CLIENT_SECRET` is no longer read: remove it from the `.env`. Every client needs a project token (`token create`), and requests with the old shared token get `401`. The `X-Cove-Source` header is ignored and `400 missing_source` no longer exists: a request is recorded under its token's name.
+- **The bootstrap endpoint is closed by default:** run `bootstrap open <project>` when onboarding a client. It hands out that project's own token.
 - **Precise error statuses:** a duplicate create is `409`, updating a missing key `404`, decrypt and database failures `500`. Success codes are unchanged.
 - **The first start records the vault key.** After that, Cove refuses to start with a different `VAULT_ENCRYPTION_KEY`; change it only with `cove rotate-key`.
 - `vault.json` and `APP_VAULT_PATH` are gone; `APP_MARKER_DIR` is now only `APP_MARKER_PATH`.
@@ -21,8 +21,8 @@ The first stable release: a rework of v0.2.0 for security, reliability and day-t
 
 ### Security
 
-- **Per-project tokens**, each limited to key patterns, read-only or read/write, managed with the new `token` command. Only a hash is stored. The master token keeps full access for emergencies.
-- **Trustworthy audit:** with a project token, the event log and request log record the token's name, which the caller can't fake.
+- **Per-project tokens**, each limited to key patterns, read-only or read/write, managed with the new `token` command. Only a hash is stored. No token has access to everything unless you create one; emergency access is the CLI on the server.
+- **Trustworthy audit:** the event log and request log record the token's name, which the caller can't fake.
 - **The event log is append-only** for the running app; every operation and its audit record are saved in one transaction.
 - **Vault key fingerprint:** Cove refuses to start with the wrong key, and values encrypted with two keys can never be mixed.
 - **`cove rotate-key`** re-encrypts the whole vault, history included, in one transaction.

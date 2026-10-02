@@ -14,12 +14,12 @@ func TestStoreKeepsOtherValuesAndRestrictsPermissions(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	if err := Store(path, "COVE_CLIENT_SECRET", "abc"); err != nil {
+	if err := Store(path, "VAULT_ENCRYPTION_KEY", "abc"); err != nil {
 		t.Fatal(err)
 	}
 
 	content, _ := os.ReadFile(path)
-	for _, want := range []string{"APP_PORT", "2101", "COVE_CLIENT_SECRET", "abc"} {
+	for _, want := range []string{"APP_PORT", "2101", "VAULT_ENCRYPTION_KEY", "abc"} {
 		if !strings.Contains(string(content), want) {
 			t.Errorf(".env is missing %q:\n%s", want, content)
 		}
@@ -55,7 +55,7 @@ func TestStoreDoesNotOverwriteUnparsableFile(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	if err := Store(path, "COVE_CLIENT_SECRET", "abc"); err == nil {
+	if err := Store(path, "VAULT_ENCRYPTION_KEY", "abc"); err == nil {
 		t.Fatal("Store succeeded on an unparsable file")
 	}
 	if content, _ := os.ReadFile(path); string(content) != original {

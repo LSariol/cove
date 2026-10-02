@@ -3,7 +3,7 @@
 **Cove** is a small self-hosted secret vault written in Go. It keeps the API keys, passwords and connection strings that the other projects on the server need, encrypted in Postgres, and hands them out over an internal HTTP API.
 
 - **Encrypted at rest** with AES-256-GCM; Cove refuses to run with the wrong key, and `cove rotate-key` replaces it safely.
-- **Per-project tokens**, each limited to the secrets it needs, read-only or read/write, plus a master token for emergencies.
+- **Per-project tokens**, each limited to the secrets it needs, read-only or read/write. There is no shared master token.
 - **Full audit and history:** every read and change is recorded with who did it, and any earlier value (or a deleted secret) can be restored.
 - **A CLI** for everyday management, with Tab completion and built-in guides (`help setup`).
 - **Hardened by default:** no published port, rate-limited logins, a non-root read-only container, and a bootstrap endpoint that's closed unless you open it.
@@ -32,7 +32,7 @@ and the project reads plain environment variables. Only a project that changes s
 
 ```bash
 mkdir -p /srv/server/storage/cove/markers
-cp .env.example /srv/server/storage/cove/.env     # set the database URLs, COVE_CLIENT_SECRET, VAULT_ENCRYPTION_KEY
+cp .env.example /srv/server/storage/cove/.env     # set the database URLs and VAULT_ENCRYPTION_KEY
 chmod 600 /srv/server/storage/cove/.env
 sudo chown -R 10001:10001 /srv/server/storage/cove
 docker compose up -d --build
