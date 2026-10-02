@@ -522,7 +522,7 @@ The CLI works on the vault directly (not through the API); everything it does is
 | `history` | `history <key> [count]` | Recent events (20): what, version, who. |
 | `status` | `status` | Version, database, schema, secrets, vault key, bootstrap. Non-zero exit on problems. |
 | `token`, `t` | `list` / `create <name> [--allow p]... [--write p]...` / `show` / `allow <p> <name>... [--write]` / `deny <p> <name>...` / `rotate <name>` / `revoke <name>` | Project tokens. `create`/`rotate` print the token once, on stdout. Warns about patterns matching nothing and wildcards still covering a denied key. |
-| `bootstrap`, `b` | `open [project] [duration]` / `lock` / `status` | [§10](#10-bootstrap). |
+| `bootstrap`, `b` | `open <project> [duration]` / `lock` / `status` | [§10](#10-bootstrap). |
 | `help`, `h` / `exit` | | |
 
 Output follows [clig.dev](https://clig.dev): data on stdout (so `$(cove get KEY)` works); messages on stderr marked `✓` `!` `✗` `?`; color only on a terminal and never with `NO_COLOR`. Arguments are split on spaces, so values with spaces need the API.
