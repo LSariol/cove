@@ -428,7 +428,7 @@ environment:
   - COVE_TOKEN=${BOTSUITE_COVE_TOKEN}
 ```
 
-The project uses CoveClient: `coveclient.New(os.Getenv("COVE_URL"), os.Getenv("COVE_TOKEN"), "botsuite")`.
+The project uses CoveClient: `coveclient.New(os.Getenv("COVE_URL"), os.Getenv("COVE_TOKEN"))`.
 
 **Lighthouse** has a read-only token over everything (`token create lighthouse --allow '*'`), fetched with `bootstrap open lighthouse` and CoveClient's `LoadOrBootstrap`. **There is no shared master token.**
 
