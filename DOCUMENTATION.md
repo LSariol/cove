@@ -544,7 +544,7 @@ The first start generates the master token and vault key into `.env` and records
 
 ## 13. Deploying with Docker
 
-**Image** (`Dockerfile`): Go 1.27.1 builds a static binary into `alpine:3.24`; it runs `/cove serve` as user `10001`. The `VERSION` build argument is stamped in (compose passes `COVE_VERSION`). `.dockerignore` keeps `.env`, `markers/` and `.git` out of the build.
+**Image** (`Dockerfile`): Go 1.27.1 builds a static binary into `alpine:3.24`; it runs `/cove serve` as user `10001`. The `COVE_VERSION` build argument is stamped in: compose passes it through from the shell when set, otherwise it is `dev`. It is not written as a `${...}` placeholder, because Lighthouse would try to fetch it from Cove as a secret. `.dockerignore` keeps `.env`, `markers/` and `.git` out of the build.
 
 **Compose** (`docker-compose.yml`):
 

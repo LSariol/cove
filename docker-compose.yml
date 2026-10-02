@@ -6,7 +6,10 @@ services:
       context: .
       dockerfile: Dockerfile
       args:
-        VERSION: ${COVE_VERSION:-dev}   # e.g. COVE_VERSION=$(git describe --tags --always)
+        # Taken from the shell when it's set there (e.g. COVE_VERSION=v1.0.0);
+        # otherwise the Dockerfile's default, "dev". Deliberately not a dollar-
+        # brace placeholder: Lighthouse reads those as secrets to fetch.
+        - COVE_VERSION
     environment:
       - APP_ENV=PROD
       - APP_PORT=2100

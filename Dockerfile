@@ -3,8 +3,8 @@ FROM golang:1.27.1-alpine AS builder
 WORKDIR /app
 COPY . .
 # Set with: COVE_VERSION=$(git describe --tags --always) docker compose up -d --build
-ARG VERSION=dev
-RUN CGO_ENABLED=0 go build -ldflags "-X main.version=${VERSION}" -o cove ./cmd/cove
+ARG COVE_VERSION=dev
+RUN CGO_ENABLED=0 go build -ldflags "-X main.version=${COVE_VERSION}" -o cove ./cmd/cove
 
 # -- Final --
 # Pinned, so a rebuild gets the same base as before. Bump it on purpose
