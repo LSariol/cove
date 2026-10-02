@@ -166,6 +166,7 @@ Settings are environment variables, read once from the `.env` file. Values alrea
 | `COVE_CLIENT_SECRET` | Yes* | The master token: full access to everything. At least 24 characters. *Generated (32 characters) if empty and the file is writable. |
 | `VAULT_ENCRYPTION_KEY` | Yes* | The vault key ([§6](#6-encryption-and-the-vault-key)). Under 24 characters only warns. *Generated (45 characters) if empty and the file is writable. **Never just edit it:** use `cove rotate-key`. |
 | `VAULT_NEW_ENCRYPTION_KEY` | No | Only while rotating the vault key ([§14](#rotating-the-vault-key)); delete it afterwards. |
+| `COVE_VERSION` | No | The version Cove reports in `status`, `cove version` and its first log line. Set in `docker-compose.yml`. Without it: `dev`, plus the git commit for a local build. |
 | `APP_PORT` | **Yes** | Port the API listens on (`2100` in Docker, `2110` for local dev). |
 | `APP_ENV` | No | `DEV` or `PROD`, shown in the CLI prompt (`cove (prod)>` in red). |
 | `APP_ENV_PATH` | No | The `.env` file to load first, and where generated secrets are saved. Default: the file that was loaded. |
@@ -544,7 +545,7 @@ The first start generates the master token and vault key into `.env` and records
 
 ## 13. Deploying with Docker
 
-**Image** (`Dockerfile`): Go 1.27.1 builds a static binary into `alpine:3.24`; it runs `/cove serve` as user `10001`. The `COVE_VERSION` build argument is stamped in: compose passes it through from the shell when set, otherwise it is `dev`. It is not written as a `${...}` placeholder, because Lighthouse would try to fetch it from Cove as a secret. `.dockerignore` keeps `.env`, `markers/` and `.git` out of the build.
+**Image** (`Dockerfile`): Go 1.27.1 builds a static binary into `alpine:3.24`; it runs `/cove serve` as user `10001`. The version Cove reports comes from `COVE_VERSION` in the compose file's `environment:`, written out as a plain value (a `${...}` placeholder there would make Lighthouse try to fetch it from Cove as a secret). `.dockerignore` keeps `.env`, `markers/` and `.git` out of the build.
 
 **Compose** (`docker-compose.yml`):
 
@@ -563,7 +564,7 @@ mkdir -p /srv/server/storage/cove/markers
 cp .env.example /srv/server/storage/cove/.env    # set the database URLs, COVE_CLIENT_SECRET and VAULT_ENCRYPTION_KEY (the file is read-only in the container)
 chmod 600 /srv/server/storage/cove/.env
 sudo chown -R 10001:10001 /srv/server/storage/cove   # Cove's user in the container; no host account needed
-COVE_VERSION=$(git describe --tags --always) docker compose up -d --build
+docker compose up -d --build
 docker exec cove /cove status
 ```
 
@@ -571,7 +572,7 @@ docker exec cove /cove status
 
 ```bash
 git pull
-COVE_VERSION=$(git describe --tags --always) docker compose up -d --build
+docker compose up -d --build
 ```
 
 State lives in Postgres and the bind mounts, so rebuilding is safe. If an editor replaces the `.env` with a new root-owned file, run the `chown` again.
@@ -671,8 +672,8 @@ go vet ./... && go test ./...
 ### Releasing
 
 1. Work lands on a branch, then `release/<version>`, and prod is updated only from `main`.
-2. Update `CHANGELOG.md`; merge to `main`; tag `vX.Y.Z` in Cove (and CoveClient if it changed); push the tags.
-3. Deploy on the server with `COVE_VERSION=$(git describe --tags --always)`.
+2. Update `CHANGELOG.md` and set `COVE_VERSION` in `docker-compose.yml` to the new version; merge to `main`; tag `vX.Y.Z` in Cove (and CoveClient if it changed); push the tags.
+3. Pushing `main` deploys it (Lighthouse), or on the server: `git pull && docker compose up -d --build`.
 
 Versions follow [semantic versioning](https://semver.org). The HTTP API stays `/v0` as long as it's backwards compatible.
 

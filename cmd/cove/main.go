@@ -23,11 +23,6 @@ import (
 	"github.com/LSariol/Cove/internal/vault"
 )
 
-// version is set at build time:
-//
-//	go build -ldflags "-X main.version=v1.0.0" ./cmd/cove
-var version = "dev"
-
 func main() {
 	args := os.Args[1:]
 
@@ -257,10 +252,11 @@ func loadConfig() config.Config {
 	return cfg
 }
 
-// buildVersion returns version, or for an unstamped local build, "dev" plus the
-// git commit it was built from when Go recorded one.
+// buildVersion returns COVE_VERSION (set in docker-compose.yml). Without it,
+// as in a local build, it's "dev" plus the git commit Cove was built from when
+// Go recorded one.
 func buildVersion() string {
-	if version != "dev" {
+	if version := os.Getenv("COVE_VERSION"); version != "" {
 		return version
 	}
 
@@ -271,7 +267,7 @@ func buildVersion() string {
 			}
 		}
 	}
-	return version
+	return "dev"
 }
 
 // runMigrate handles `cove migrate [status|up]` using COVE_MIGRATE_DATABASE_URL.

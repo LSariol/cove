@@ -35,7 +35,7 @@ mkdir -p /srv/server/storage/cove/markers
 cp .env.example /srv/server/storage/cove/.env     # set the database URLs, COVE_CLIENT_SECRET, VAULT_ENCRYPTION_KEY
 chmod 600 /srv/server/storage/cove/.env
 sudo chown -R 10001:10001 /srv/server/storage/cove
-COVE_VERSION=$(git describe --tags --always) docker compose up -d --build
+docker compose up -d --build
 docker exec cove /cove status
 ```
 
