@@ -67,8 +67,7 @@ func (c *CLI) tokenList(ctx context.Context) error {
 		fmt.Fprintf(w, "%s\t%s\t%s\t%s\n", t.Name, joinOrDash(t.Read), joinOrDash(t.Write), formatOptionalTime(t.LastUsedAt, "never"))
 	}
 	w.Flush()
-	info(fmt.Sprintf("%d %s. The master token (COVE_CLIENT_SECRET) also works, with access to everything.",
-		len(list), plural(len(list), "token", "tokens")))
+	info(fmt.Sprintf("%d %s.", len(list), plural(len(list), "token", "tokens")))
 	return nil
 }
 

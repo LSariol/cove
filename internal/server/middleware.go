@@ -2,7 +2,6 @@ package server
 
 import (
 	"context"
-	"crypto/subtle"
 	"errors"
 	"log"
 	"net/http"
@@ -16,24 +15,18 @@ type TokenAuthenticator interface {
 	Authenticate(ctx context.Context, value string) (tokens.Token, error)
 }
 
-// caller is who made a request: the master token (project is nil), or a
-// project token.
-type caller struct {
-	project *tokens.Token
-}
-
 type callerKey struct{}
 
-// callerFrom returns the caller that requireToken stored in ctx.
-func callerFrom(ctx context.Context) caller {
-	c, _ := ctx.Value(callerKey{}).(caller)
-	return c
+// callerFrom returns the token that requireToken stored in ctx: the project
+// that made the request.
+func callerFrom(ctx context.Context) tokens.Token {
+	tok, _ := ctx.Value(callerKey{}).(tokens.Token)
+	return tok
 }
 
-// requireToken is middleware that accepts the master token
-// (COVE_CLIENT_SECRET) or a project token in the Authorization header, and
-// records which one was used for the handlers. Failed attempts count toward
-// the address's rate limit (see ratelimit.go).
+// requireToken is middleware that accepts a project token in the
+// Authorization header and records which one was used for the handlers.
+// Failed attempts count toward the address's rate limit (see ratelimit.go).
 func (s *Server) requireToken(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if s.refuseIfBlocked(w, r) {
@@ -54,26 +47,17 @@ func (s *Server) requireToken(next http.Handler) http.Handler {
 			writeError(w, http.StatusUnauthorized, "invalid_token_format", "Authorization header must be in the form: Bearer <token>")
 			return
 		}
-		provided := tokenParts[1]
 
-		if s.clientSecret != "" && subtle.ConstantTimeCompare([]byte(provided), []byte(s.clientSecret)) == 1 {
-			next.ServeHTTP(w, r.WithContext(context.WithValue(r.Context(), callerKey{}, caller{})))
+		tok, err := s.tokens.Authenticate(r.Context(), tokenParts[1])
+		switch {
+		case err == nil:
+			setTokenName(r.Context(), tok.Name)
+			next.ServeHTTP(w, r.WithContext(context.WithValue(r.Context(), callerKey{}, tok)))
 			return
-		}
-
-		if s.tokens != nil {
-			tok, err := s.tokens.Authenticate(r.Context(), provided)
-			switch {
-			case err == nil:
-				setTokenName(r.Context(), tok.Name)
-				ctx := context.WithValue(r.Context(), callerKey{}, caller{project: &tok})
-				next.ServeHTTP(w, r.WithContext(ctx))
-				return
-			case !errors.Is(err, tokens.ErrNotFound):
-				log.Printf("check token: %v", err)
-				writeError(w, http.StatusServiceUnavailable, "auth_unavailable", "the token couldn't be checked right now; try again")
-				return
-			}
+		case !errors.Is(err, tokens.ErrNotFound):
+			log.Printf("check token: %v", err)
+			writeError(w, http.StatusServiceUnavailable, "auth_unavailable", "the token couldn't be checked right now; try again")
+			return
 		}
 
 		s.limiter.fail(addr, "invalid token")

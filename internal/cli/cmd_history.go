@@ -51,13 +51,12 @@ func (c *CLI) info(ctx context.Context, args []string) error {
 	return w.Flush()
 }
 
-// describeReaders lists the project tokens that can read a secret. The master
-// token can always read everything, so it's mentioned last.
+// describeReaders lists the project tokens that can read a secret.
 func describeReaders(names []string) string {
 	if len(names) == 0 {
-		return "no project tokens (only the master token)"
+		return "no project tokens"
 	}
-	return strings.Join(names, ", ") + " (and the master token)"
+	return strings.Join(names, ", ")
 }
 
 func (c *CLI) history(ctx context.Context, args []string) error {

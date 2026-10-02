@@ -31,7 +31,7 @@ func TestBootstrapHandsOutAProjectToken(t *testing.T) {
 
 	v := vault.New(vaulttest.NewStore(), encryption.NewCipher("k"))
 	mux := http.NewServeMux()
-	New(v, gate, &fakePinger{}, Options{ClientSecret: testToken, Tokens: m}).defineRoutes(mux)
+	New(v, gate, &fakePinger{}, Options{Tokens: m}).defineRoutes(mux)
 	api := &testAPI{t: t, handler: mux, gate: gate}
 
 	code, env := api.do("GET", "/v0/bootstrap/lighthouse", "")

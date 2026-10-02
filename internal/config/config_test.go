@@ -112,15 +112,15 @@ func TestEnsureGeneratesAndUsesMissingSecrets(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	if len(cfg.ClientSecret) != 32 || len(cfg.EncryptionKey) != 45 {
-		t.Fatalf("generated lengths = %d / %d, want 32 / 45", len(cfg.ClientSecret), len(cfg.EncryptionKey))
+	if len(cfg.EncryptionKey) != 45 {
+		t.Fatalf("generated key length = %d, want 45", len(cfg.EncryptionKey))
 	}
 
 	saved, err := os.ReadFile(path)
 	if err != nil {
 		t.Fatal(err)
 	}
-	for _, want := range []string{cfg.ClientSecret, cfg.EncryptionKey, "APP_PORT"} {
+	for _, want := range []string{cfg.EncryptionKey, "APP_PORT"} {
 		if !strings.Contains(string(saved), want) {
 			t.Errorf(".env is missing %q", want)
 		}
@@ -130,7 +130,7 @@ func TestEnsureGeneratesAndUsesMissingSecrets(t *testing.T) {
 func TestEnsureKeepsExistingSecrets(t *testing.T) {
 	path := writeEnvFile(t, t.TempDir(), "")
 
-	in := Config{EnvPath: path, ClientSecret: "existing-client-secret", EncryptionKey: "existing-encryption-key"}
+	in := Config{EnvPath: path, EncryptionKey: "existing-encryption-key"}
 	out, err := Ensure(in)
 	if err != nil {
 		t.Fatal(err)
@@ -150,11 +150,11 @@ func TestEnsureExplainsReadOnlyEnvFile(t *testing.T) {
 	}
 	t.Cleanup(func() { os.Chmod(path, 0o600) })
 
-	_, err := Ensure(Config{EnvPath: path, EncryptionKey: "existing-encryption-key"})
+	_, err := Ensure(Config{EnvPath: path})
 	if err == nil {
 		t.Fatal("Ensure succeeded with a read-only .env")
 	}
-	for _, want := range []string{"COVE_CLIENT_SECRET is not set", path, "Set COVE_CLIENT_SECRET in that file"} {
+	for _, want := range []string{"VAULT_ENCRYPTION_KEY is not set", path, "Set VAULT_ENCRYPTION_KEY in that file"} {
 		if !strings.Contains(err.Error(), want) {
 			t.Errorf("error %q doesn't mention %q", err, want)
 		}
@@ -166,7 +166,6 @@ func validConfig() Config {
 	return Config{
 		DatabaseURL:   "postgres://cove_app:pass@localhost:5432/cove_db",
 		Port:          "2100",
-		ClientSecret:  strings.Repeat("x", 32),
 		EncryptionKey: strings.Repeat("k", 45),
 	}
 }
@@ -186,16 +185,6 @@ func TestValidateRequiresDatabaseURLAndPort(t *testing.T) {
 	noPort.Port = ""
 	if err := noPort.Validate(); err == nil || !strings.Contains(err.Error(), "APP_PORT") {
 		t.Errorf("missing APP_PORT: %v", err)
-	}
-}
-
-func TestValidateRejectsShortClientSecret(t *testing.T) {
-	for _, secret := range []string{"Kept Empty", "short", strings.Repeat("x", minSecretLength-1)} {
-		cfg := validConfig()
-		cfg.ClientSecret = secret
-		if err := cfg.Validate(); err == nil {
-			t.Errorf("Validate accepted client secret %q", secret)
-		}
 	}
 }
 

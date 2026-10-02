@@ -20,7 +20,6 @@ import (
 type Config struct {
 	DatabaseURL        string // COVE_DATABASE_URL: runtime role (cove_app)
 	MigrateDatabaseURL string // COVE_MIGRATE_DATABASE_URL: migrator role; empty disables migrations
-	ClientSecret       string // COVE_CLIENT_SECRET: bearer token clients must send
 	EncryptionKey      string // VAULT_ENCRYPTION_KEY: source of the AES key
 	Port               string // APP_PORT
 	EnvPath            string // APP_ENV_PATH: file that generated secrets are written to (default: the .env file that was loaded)
@@ -43,9 +42,9 @@ type Config struct {
 
 const defaultMarkerDir = "/app/vault/markers"
 
-// minSecretLength is the shortest COVE_CLIENT_SECRET / VAULT_ENCRYPTION_KEY
-// accepted. Generated values are 32 and 45 characters.
-const minSecretLength = 24
+// minKeyLength is the shortest VAULT_ENCRYPTION_KEY that doesn't get a
+// warning. A generated one is 45 characters.
+const minKeyLength = 24
 
 // envFiles are tried in order by Load, after APP_ENV_PATH; the first one that
 // exists is loaded.
@@ -99,7 +98,6 @@ func fromEnv(envFile string) Config {
 	cfg := Config{
 		DatabaseURL:        os.Getenv("COVE_DATABASE_URL"),
 		MigrateDatabaseURL: os.Getenv("COVE_MIGRATE_DATABASE_URL"),
-		ClientSecret:       os.Getenv("COVE_CLIENT_SECRET"),
 		EncryptionKey:      os.Getenv("VAULT_ENCRYPTION_KEY"),
 		NewEncryptionKey:   os.Getenv("VAULT_NEW_ENCRYPTION_KEY"),
 		Port:               os.Getenv("APP_PORT"),
@@ -122,8 +120,7 @@ func fromEnv(envFile string) Config {
 	return cfg
 }
 
-// Validate returns an error for settings Cove must not run with. Call it after
-// Ensure, which fills in missing secrets.
+// Validate returns an error for settings Cove must not run with.
 func (c Config) Validate() error {
 	if c.DatabaseURL == "" {
 		return errors.New("COVE_DATABASE_URL is not set. Set it to the cove_app connection string, e.g. postgres://cove_app:password@host:5432/cove_db")
@@ -136,10 +133,6 @@ func (c Config) Validate() error {
 	}
 	if _, err := c.RetentionDays(); err != nil {
 		return err
-	}
-	if len(c.ClientSecret) < minSecretLength {
-		return fmt.Errorf("COVE_CLIENT_SECRET is too short (%d characters, need at least %d). "+
-			"Leave it empty to have Cove generate one, then update your clients", len(c.ClientSecret), minSecretLength)
 	}
 	return nil
 }
@@ -188,7 +181,7 @@ func (c Config) BootstrapAllowed() ([]netip.Prefix, error) {
 // existing vault out of its own data. `cove rotate-key` replaces it.
 func (c Config) Warnings() []string {
 	var warnings []string
-	if len(c.EncryptionKey) < minSecretLength {
+	if len(c.EncryptionKey) < minKeyLength {
 		warnings = append(warnings, fmt.Sprintf("VAULT_ENCRYPTION_KEY is only %d characters; a key this short is guessable. "+
 			"Replace it with `cove rotate-key` (see DOCUMENTATION.md, Rotating the vault key)", len(c.EncryptionKey)))
 	}
@@ -230,22 +223,10 @@ func Store(path string, key string, value string) error {
 	return os.Chmod(path, 0o600)
 }
 
-// Ensure makes sure COVE_CLIENT_SECRET and VAULT_ENCRYPTION_KEY are set. Any
-// that are missing are generated, saved to the file at cfg.EnvPath, and set in
-// the returned Config, so this run uses them straight away.
+// Ensure makes sure VAULT_ENCRYPTION_KEY is set. If it's missing, one is
+// generated, saved to the file at cfg.EnvPath, and set in the returned Config,
+// so this run uses it straight away.
 func Ensure(cfg Config) (Config, error) {
-
-	if cfg.ClientSecret == "" {
-		newValue, err := encryption.GenerateSecret(32)
-		if err != nil {
-			return cfg, err
-		}
-
-		if err := Store(cfg.EnvPath, "COVE_CLIENT_SECRET", newValue); err != nil {
-			return cfg, saveError("COVE_CLIENT_SECRET", cfg.EnvPath, err)
-		}
-		cfg.ClientSecret = newValue
-	}
 
 	if cfg.EncryptionKey == "" {
 		newValue, err := encryption.GenerateSecret(45)
@@ -262,7 +243,7 @@ func Ensure(cfg Config) (Config, error) {
 	return cfg, nil
 }
 
-// saveError explains a failed save of a generated secret. In Docker the .env
+// saveError explains a failed save of a generated value. In Docker the .env
 // file is mounted read-only, so the fix is to set the value in the file.
 func saveError(name string, path string, err error) error {
 	return fmt.Errorf("%s is not set, and a generated value couldn't be saved to %s: %w\n"+

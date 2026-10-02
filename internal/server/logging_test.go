@@ -25,7 +25,7 @@ func TestRequestLog(t *testing.T) {
 		handler.ServeHTTP(httptest.NewRecorder(), req)
 	}
 
-	auth := []string{"Authorization", "Bearer " + testToken, "X-Cove-Source", "myapp"}
+	auth := []string{"Authorization", "Bearer " + testToken}
 	do("POST", "/v0/secrets/app.key", `{"value":"super-secret-value"}`, auth...)
 	do("GET", "/v0/secrets/app.key", "", auth...)
 	do("GET", "/v0/secrets/missing", "", auth...)
@@ -37,7 +37,7 @@ func TestRequestLog(t *testing.T) {
 		"POST /v0/secrets/app.key 201",
 		"GET /v0/secrets/app.key 200",
 		"GET /v0/secrets/missing 404",
-		"source=myapp",
+		"source=test",
 		"from=192.0.2.1",
 	} {
 		if !strings.Contains(out, want) {
@@ -51,8 +51,7 @@ func TestRequestLog(t *testing.T) {
 	}
 }
 
-// With a project token, the log shows the token's name, not whatever the
-// X-Cove-Source header claims.
+// The log shows the token's name, not whatever an X-Cove-Source header claims.
 func TestRequestLogShowsTheTokenName(t *testing.T) {
 	var buf bytes.Buffer
 	old := log.Writer()

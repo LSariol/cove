@@ -44,8 +44,8 @@ func (c *CLI) create(ctx context.Context, args []string) error {
 
 // describeNewKeyAccess says which projects can read a secret just created,
 // or how to give one access if none can: the moment it's easiest to forget.
-// It says nothing while no project tokens exist (everyone uses the master
-// token then), and a failure to check doesn't fail the create.
+// It says nothing while no project tokens exist (there's nobody to give
+// access to yet), and a failure to check doesn't fail the create.
 func (c *CLI) describeNewKeyAccess(ctx context.Context, key string) {
 	if c.tokens == nil {
 		return
@@ -65,7 +65,7 @@ func (c *CLI) describeNewKeyAccess(ctx context.Context, key string) {
 		info(fmt.Sprintf("No project token can read %q yet. To give one access: token allow %s <project>", key, key))
 		return
 	}
-	info(fmt.Sprintf("Readable by %s (and the master token).", joinNames(readers)))
+	info(fmt.Sprintf("Readable by %s.", joinNames(readers)))
 }
 
 func (c *CLI) delete(ctx context.Context, args []string) error {

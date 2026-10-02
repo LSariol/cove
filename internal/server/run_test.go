@@ -8,7 +8,7 @@ import (
 )
 
 func TestRunStopsWhenContextIsCancelled(t *testing.T) {
-	s := New(nil, nil, &fakePinger{}, Options{ClientSecret: testToken, Port: "0"})
+	s := New(nil, nil, &fakePinger{}, Options{Tokens: fullAccess{}, Port: "0"})
 
 	ctx, cancel := context.WithCancel(context.Background())
 	done := make(chan error, 1)
@@ -35,7 +35,7 @@ func TestRunReportsListenErrors(t *testing.T) {
 	defer taken.Close()
 	_, port, _ := net.SplitHostPort(taken.Addr().String())
 
-	s := New(nil, nil, &fakePinger{}, Options{ClientSecret: testToken, Port: port})
+	s := New(nil, nil, &fakePinger{}, Options{Tokens: fullAccess{}, Port: port})
 	if err := s.Run(context.Background()); err == nil {
 		t.Fatal("Run succeeded on a port that's already in use")
 	}

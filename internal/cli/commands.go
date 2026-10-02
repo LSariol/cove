@@ -398,7 +398,7 @@ reachable, and a key starting SHARED_ isn't special: it must be allowed.
   Pattern              Matches
   MARQUEE_*            every key starting with "MARQUEE_" (MARQUEE_DATABASE_URL, ...)
   SHARED_TMDB_API_KEY  exactly that key
-  *                    every key (like the master token, but revocable)
+  *                    every key
 
 Keys are case-sensitive. "*" only works at the end of a pattern.
 

@@ -17,7 +17,7 @@ func TestCreateSaysWhoCanReadTheNewSecret(t *testing.T) {
 	run(t, c, "token create botsuite --allow botsuite.* --allow shared.*")
 
 	_, e, _ := run(t, c, "create shared.openai-key x")
-	if !strings.Contains(e, "Readable by botsuite (and the master token).") {
+	if !strings.Contains(e, "Readable by botsuite.") {
 		t.Errorf("create a covered key:\n%s", e)
 	}
 
@@ -27,7 +27,7 @@ func TestCreateSaysWhoCanReadTheNewSecret(t *testing.T) {
 	}
 
 	_, e, _ = run(t, c, "generate marquee.session-key --yes")
-	if !strings.Contains(e, "Readable by marquee (and the master token).") {
+	if !strings.Contains(e, "Readable by marquee.") {
 		t.Errorf("generate:\n%s", e)
 	}
 }

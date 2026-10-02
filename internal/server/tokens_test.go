@@ -23,6 +23,7 @@ type projectAPI struct {
 	store   *vaulttest.Store
 	manager *tokens.Manager
 	marquee string // marquee's token
+	admin   string // the token of "admin", which may read and change every key
 }
 
 func newProjectAPI(t *testing.T) *projectAPI {
@@ -32,7 +33,7 @@ func newProjectAPI(t *testing.T) *projectAPI {
 	store := vaulttest.NewStore()
 	v := vault.New(store, encryption.NewCipher("test-vault-key"))
 	m := tokens.NewManager(tokenstest.NewStore())
-	s := New(v, bootstrap.NewGate(t.TempDir(), nil), &fakePinger{}, Options{ClientSecret: testToken, Port: "0", Tokens: m})
+	s := New(v, bootstrap.NewGate(t.TempDir(), nil), &fakePinger{}, Options{Port: "0", Tokens: m})
 
 	mux := http.NewServeMux()
 	s.defineRoutes(mux)
@@ -47,11 +48,16 @@ func newProjectAPI(t *testing.T) *projectAPI {
 		t.Fatal(err)
 	}
 
-	return &projectAPI{testAPI: &testAPI{t: t, handler: mux}, vault: v, store: store, manager: m, marquee: value}
+	admin, _, err := m.Create(ctx, "admin", nil, []string{"*"}, "setup")
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	return &projectAPI{testAPI: &testAPI{t: t, handler: mux}, vault: v, store: store, manager: m, marquee: value, admin: admin}
 }
 
-// as sends a request with marquee's token. Like CoveClient, it also sends
-// X-Cove-Source, set to something else, to show it's ignored.
+// as sends a request with marquee's token. It also sends an X-Cove-Source
+// header naming someone else, as an older client would, to show it's ignored.
 func (a *projectAPI) as(method string, key string, body string) (int, envelope) {
 	a.t.Helper()
 	return a.do(method, "/v0/secrets/"+key, body, "Authorization", "Bearer "+a.marquee, "X-Cove-Source", "pretending")
@@ -115,13 +121,6 @@ func TestProjectTokenIsRecordedByName(t *testing.T) {
 	}
 }
 
-func TestProjectTokenNeedsNoSourceHeader(t *testing.T) {
-	api := newProjectAPI(t)
-	if code, _ := api.do("GET", "/v0/secrets/marquee.db-url", "", "Authorization", "Bearer "+api.marquee); code != 200 {
-		t.Fatalf("GET without X-Cove-Source = %d", code)
-	}
-}
-
 func TestProjectTokenListSeesOnlyItsKeys(t *testing.T) {
 	api := newProjectAPI(t)
 
@@ -140,10 +139,10 @@ func TestProjectTokenListSeesOnlyItsKeys(t *testing.T) {
 		}
 	}
 
-	// The master token still sees everything.
-	_, env = api.do("GET", "/v0/secrets", "", "Authorization", "Bearer "+testToken)
+	// A token allowed every key sees them all.
+	_, env = api.do("GET", "/v0/secrets", "", "Authorization", "Bearer "+api.admin)
 	if n := len(decode[SecretSummaryList](t, env).Secrets); n != 4 {
-		t.Fatalf("master token lists %d secrets, want 4", n)
+		t.Fatalf("a * token lists %d secrets, want 4", n)
 	}
 }
 
@@ -165,17 +164,6 @@ func TestProjectTokenAuthAndRevoke(t *testing.T) {
 	expectError(t, code, env, 401, "invalid_token")
 }
 
-func TestMasterTokenKeepsFullAccess(t *testing.T) {
-	api := newProjectAPI(t)
-	code, _ := api.do("GET", "/v0/secrets/botsuite.db-url", "", "Authorization", "Bearer "+testToken, "X-Cove-Source", "old-app")
-	if code != 200 {
-		t.Fatalf("master token GET = %d", code)
-	}
-	if last := api.store.Events[len(api.store.Events)-1]; last.Source != "old-app" {
-		t.Fatalf("master token source = %q, want the header value", last.Source)
-	}
-}
-
 // failingTokens is a TokenAuthenticator whose database is down.
 type failingTokens struct{}
 
@@ -185,7 +173,7 @@ func (failingTokens) Authenticate(context.Context, string) (tokens.Token, error)
 
 func TestTokenCheckFailureIsNotA401(t *testing.T) {
 	v := vault.New(vaulttest.NewStore(), encryption.NewCipher("k"))
-	s := New(v, bootstrap.NewGate(t.TempDir(), nil), &fakePinger{}, Options{ClientSecret: testToken, Tokens: failingTokens{}})
+	s := New(v, bootstrap.NewGate(t.TempDir(), nil), &fakePinger{}, Options{Tokens: failingTokens{}})
 	mux := http.NewServeMux()
 	s.defineRoutes(mux)
 	api := &testAPI{t: t, handler: mux}
@@ -193,16 +181,11 @@ func TestTokenCheckFailureIsNotA401(t *testing.T) {
 	// A client told 401 would think its token is wrong and might discard it.
 	code, env := api.do("GET", "/v0/auth", "", "Authorization", "Bearer cove_whatever")
 	expectError(t, code, env, 503, "auth_unavailable")
-
-	// The master token doesn't need the database to be checked.
-	if code, _ := api.do("GET", "/v0/auth", "", "Authorization", "Bearer "+testToken); code != 200 {
-		t.Fatalf("master token while the token store is down = %d", code)
-	}
 }
 
-func TestEmptyMasterTokenNeverMatches(t *testing.T) {
+func TestEmptyTokenIsRefused(t *testing.T) {
 	v := vault.New(vaulttest.NewStore(), encryption.NewCipher("k"))
-	s := New(v, bootstrap.NewGate(t.TempDir(), nil), &fakePinger{}, Options{ClientSecret: ""})
+	s := New(v, bootstrap.NewGate(t.TempDir(), nil), &fakePinger{}, Options{Tokens: tokens.NewManager(tokenstest.NewStore())})
 	mux := http.NewServeMux()
 	s.defineRoutes(mux)
 
@@ -211,6 +194,6 @@ func TestEmptyMasterTokenNeverMatches(t *testing.T) {
 	rec := httptest.NewRecorder()
 	mux.ServeHTTP(rec, req)
 	if rec.Code != 401 {
-		t.Fatalf("an empty token with no master token configured = %d, want 401", rec.Code)
+		t.Fatalf("an empty token = %d, want 401", rec.Code)
 	}
 }

@@ -99,20 +99,6 @@ func TestBatchNamesEveryMissingKeyAndReadsNothing(t *testing.T) {
 	}
 }
 
-func TestBatchWithTheMasterToken(t *testing.T) {
-	api := newProjectAPI(t)
-	auth := []string{"Authorization", "Bearer " + testToken}
-
-	// Like a single read, the master token must say who's asking.
-	code, env := api.do("POST", "/v0/batch", `{"keys": ["botsuite.db-url"]}`, auth...)
-	expectError(t, code, env, 400, "missing_source")
-
-	code, env = api.do("POST", "/v0/batch", `{"keys": ["botsuite.db-url", "marquee.db-url"]}`, append(auth, "X-Cove-Source", "old-app")...)
-	if code != 200 || !slices.Equal(batchKeys(t, env), []string{"botsuite.db-url", "marquee.db-url"}) {
-		t.Fatalf("master token batch = %d %s", code, env.Data)
-	}
-}
-
 func TestBatchRequestChecks(t *testing.T) {
 	api := newProjectAPI(t)
 

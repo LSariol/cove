@@ -9,7 +9,7 @@ import (
 
 // requestInfo is filled in while a request is handled, for its log line.
 type requestInfo struct {
-	tokenName string // set when a project token was used
+	tokenName string // set once the request's token has been checked
 }
 
 type requestInfoKey struct{}
@@ -25,8 +25,8 @@ func setTokenName(ctx context.Context, name string) {
 //
 //	GET /v0/secrets/MYAPP_DB_URL 200 1.2ms source=myapp from=172.18.0.5
 //
-// source is the project token's name when one was used (it can't be faked),
-// otherwise the X-Cove-Source header.
+// source is the name of the token that was used, or "-" for a request without
+// a valid one.
 //
 // It never logs request or response bodies, or headers such as Authorization,
 // so values and tokens stay out of the log. Successful health and readiness
@@ -43,10 +43,7 @@ func logRequests(next http.Handler) http.Handler {
 			return
 		}
 
-		source := r.Header.Get("X-Cove-Source")
-		if info.tokenName != "" {
-			source = info.tokenName
-		}
+		source := info.tokenName
 		if source == "" {
 			source = "-"
 		}

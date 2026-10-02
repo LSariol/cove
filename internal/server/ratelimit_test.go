@@ -64,7 +64,7 @@ func newLimitedAPI(t *testing.T) (*testAPI, *bootstrap.Gate) {
 	gate := bootstrap.NewGate(t.TempDir(), nil)
 	v := vault.New(vaulttest.NewStore(), encryption.NewCipher("k"))
 	mux := http.NewServeMux()
-	New(v, gate, &fakePinger{}, Options{ClientSecret: testToken}).defineRoutes(mux)
+	New(v, gate, &fakePinger{}, Options{Tokens: fullAccess{}}).defineRoutes(mux)
 	return &testAPI{t: t, handler: mux, gate: gate}, gate
 }
 
@@ -101,7 +101,7 @@ func TestValidTokensAreNeverLimited(t *testing.T) {
 func TestTokenCheckOutageDoesNotCount(t *testing.T) {
 	v := vault.New(vaulttest.NewStore(), encryption.NewCipher("k"))
 	mux := http.NewServeMux()
-	New(v, bootstrap.NewGate(t.TempDir(), nil), &fakePinger{}, Options{ClientSecret: testToken, Tokens: failingTokens{}}).defineRoutes(mux)
+	New(v, bootstrap.NewGate(t.TempDir(), nil), &fakePinger{}, Options{Tokens: failingTokens{}}).defineRoutes(mux)
 	api := &testAPI{t: t, handler: mux}
 
 	for i := 0; i < 2*maxFailures; i++ {

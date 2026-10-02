@@ -95,7 +95,7 @@ func TestInfoShowsWhichTokensCanRead(t *testing.T) {
 	c, _ := newTokenCLI(t, "")
 
 	o, _, err := run(t, c, "info shared.tmdb-api-key")
-	if err != nil || !strings.Contains(o, "Readable by:  no project tokens (only the master token)") {
+	if err != nil || !strings.Contains(o, "Readable by:  no project tokens") {
 		t.Fatalf("info before any token = %q, %v", o, err)
 	}
 
@@ -104,7 +104,7 @@ func TestInfoShowsWhichTokensCanRead(t *testing.T) {
 	run(t, c, "token create lighthouse --allow lighthouse.*")
 
 	o, _, _ = run(t, c, "info shared.tmdb-api-key")
-	if !strings.Contains(o, "Readable by:  botsuite, marquee (and the master token)") {
+	if !strings.Contains(o, "Readable by:  botsuite, marquee") {
 		t.Fatalf("info = %q", o)
 	}
 }

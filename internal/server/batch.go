@@ -30,7 +30,7 @@ type BatchResponse struct {
 // in this order, so the answer never reveals more than a single read would:
 //
 //  1. The body lists 1–100 valid keys.
-//  2. A project token must be able to read every key. If not, 403 without
+//  2. The token must be able to read every key. If not, 403 without
 //     saying which: the server log names them, for the operator.
 //  3. Every key must exist. If not, 404 naming every missing key (the caller
 //     is allowed to read them, so their names aren't news to it).
@@ -59,27 +59,20 @@ func (s *Server) batchHandler(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
-	c := callerFrom(r.Context())
-	source := r.Header.Get("X-Cove-Source")
-	if c.project != nil {
-		source = c.project.Name
-		var refused []string
-		for _, key := range body.Keys {
-			if !c.project.CanRead(key) {
-				refused = append(refused, key)
-			}
+	tok := callerFrom(r.Context())
+	var refused []string
+	for _, key := range body.Keys {
+		if !tok.CanRead(key) {
+			refused = append(refused, key)
 		}
-		if len(refused) > 0 {
-			log.Printf("batch: %s's token can't read %s; refused the whole request", c.project.Name, strings.Join(refused, ", "))
-			writeError(w, http.StatusForbidden, "forbidden_key", fmt.Sprintf("%s's token can't read one or more of the requested keys", c.project.Name))
-			return
-		}
-	} else if source == "" {
-		writeError(w, http.StatusBadRequest, "missing_source", "X-Cove-Source header is required (the name of the calling app)")
+	}
+	if len(refused) > 0 {
+		log.Printf("batch: %s's token can't read %s; refused the whole request", tok.Name, strings.Join(refused, ", "))
+		writeError(w, http.StatusForbidden, "forbidden_key", fmt.Sprintf("%s's token can't read one or more of the requested keys", tok.Name))
 		return
 	}
 
-	secrets, err := s.vault.GetMany(r.Context(), body.Keys, source)
+	secrets, err := s.vault.GetMany(r.Context(), body.Keys, tok.Name)
 	var missing *vault.MissingError
 	switch {
 	case wroteWrongKey(w, err):
@@ -88,11 +81,11 @@ func (s *Server) batchHandler(w http.ResponseWriter, r *http.Request) {
 		writeErrorWithKeys(w, http.StatusNotFound, "not_found", "no secret named "+strings.Join(missing.Keys, ", "), missing.Keys)
 		return
 	case errors.Is(err, vault.ErrDecrypt):
-		log.Printf("batch (source %q) failed: %v", source, err)
+		log.Printf("batch (source %q) failed: %v", tok.Name, err)
 		writeError(w, http.StatusInternalServerError, "decrypt_error", "a secret exists but couldn't be decrypted; VAULT_ENCRYPTION_KEY may have changed")
 		return
 	case err != nil:
-		log.Printf("batch (source %q) failed: %v", source, err)
+		log.Printf("batch (source %q) failed: %v", tok.Name, err)
 		writeError(w, http.StatusInternalServerError, "read_error", "the secrets could not be read")
 		return
 	}

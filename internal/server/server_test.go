@@ -1,6 +1,7 @@
 package server
 
 import (
+	"context"
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
@@ -9,6 +10,7 @@ import (
 
 	"github.com/LSariol/Cove/internal/bootstrap"
 	"github.com/LSariol/Cove/internal/encryption"
+	"github.com/LSariol/Cove/internal/tokens"
 	"github.com/LSariol/Cove/internal/vault"
 	"github.com/LSariol/Cove/internal/vault/vaulttest"
 )
@@ -16,7 +18,19 @@ import (
 // These tests pin down the /v0 API contract that CoveClient and every project
 // depend on: status codes, error types, and JSON field names.
 
-const testToken = "test-client-secret-0123456789"
+// testToken is the token of "test", a project that may read and change every
+// key.
+const testToken = "cove_test-token-0123456789"
+
+// fullAccess is a TokenAuthenticator that knows only testToken.
+type fullAccess struct{}
+
+func (fullAccess) Authenticate(_ context.Context, value string) (tokens.Token, error) {
+	if value != testToken {
+		return tokens.Token{}, tokens.ErrNotFound
+	}
+	return tokens.Token{Name: "test", Write: []string{"*"}}, nil
+}
 
 type testAPI struct {
 	t       *testing.T
@@ -28,7 +42,7 @@ func newTestAPI(t *testing.T) *testAPI {
 	t.Helper()
 	v := vault.New(vaulttest.NewStore(), encryption.NewCipher("test-vault-key"))
 	gate := bootstrap.NewGate(t.TempDir(), nil)
-	s := New(v, gate, &fakePinger{}, Options{ClientSecret: testToken, Port: "0", Version: "v9.9.9"})
+	s := New(v, gate, &fakePinger{}, Options{Tokens: fullAccess{}, Port: "0", Version: "v9.9.9"})
 
 	mux := http.NewServeMux()
 	s.defineRoutes(mux)
@@ -59,10 +73,10 @@ func (a *testAPI) do(method string, path string, body string, headers ...string)
 	return rec.Code, env
 }
 
-// secret sends an authenticated request with an X-Cove-Source header.
+// secret sends a request with testToken.
 func (a *testAPI) secret(method string, key string, body string) (int, envelope) {
 	a.t.Helper()
-	return a.do(method, "/v0/secrets/"+key, body, "Authorization", "Bearer "+testToken, "X-Cove-Source", "test")
+	return a.do(method, "/v0/secrets/"+key, body, "Authorization", "Bearer "+testToken)
 }
 
 func expectError(t *testing.T, code int, env envelope, wantCode int, wantType string) {
@@ -111,12 +125,8 @@ func TestAuthentication(t *testing.T) {
 
 func TestSecretRequestChecks(t *testing.T) {
 	api := newTestAPI(t)
-	auth := []string{"Authorization", "Bearer " + testToken}
 
-	code, env := api.do("GET", "/v0/secrets/app.key", "", auth...)
-	expectError(t, code, env, 400, "missing_source")
-
-	code, env = api.secret("GET", "bad:key", "")
+	code, env := api.secret("GET", "bad:key", "")
 	expectError(t, code, env, 400, "invalid_key")
 
 	code, env = api.secret("PUT", "app.key", `{"value":"x"}`)

@@ -110,10 +110,9 @@ func runServer(withShell bool) {
 	tokenManager := tokens.NewManager(db)
 
 	srv := server.New(v, gate, db, server.Options{
-		ClientSecret: cfg.ClientSecret,
-		Port:         cfg.Port,
-		Version:      buildVersion(),
-		Tokens:       tokenManager,
+		Port:    cfg.Port,
+		Version: buildVersion(),
+		Tokens:  tokenManager,
 	})
 
 	if days, _ := cfg.RetentionDays(); days > 0 { // validated above

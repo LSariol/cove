@@ -42,7 +42,7 @@ func TestUndecryptableSecretIsAServerError(t *testing.T) {
 	// The same data read with a different vault key.
 	v := vault.New(store, encryption.NewCipher("a-new-key"))
 	mux := http.NewServeMux()
-	New(v, bootstrap.NewGate(t.TempDir(), nil), &fakePinger{}, Options{ClientSecret: testToken, Port: "0"}).defineRoutes(mux)
+	New(v, bootstrap.NewGate(t.TempDir(), nil), &fakePinger{}, Options{Tokens: fullAccess{}, Port: "0"}).defineRoutes(mux)
 	api := &testAPI{t: t, handler: mux}
 
 	code, env := api.secret("GET", "app.key", "")

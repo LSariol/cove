@@ -47,19 +47,13 @@ func (s *Server) handleSecretID(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// A project token is recorded under its own name; the header can't
-	// change that. The master token is shared, so its caller names itself.
-	c := callerFrom(r.Context())
-	source := r.Header.Get("X-Cove-Source")
-	if c.project != nil {
-		source = c.project.Name
-		if !s.allowed(w, r.Method, *c.project, id) {
-			return
-		}
-	} else if source == "" {
-		writeError(w, http.StatusBadRequest, "missing_source", "X-Cove-Source header is required (the name of the calling app)")
+	// The request is recorded under the token's name, which the caller can't
+	// choose.
+	tok := callerFrom(r.Context())
+	if !s.allowed(w, r.Method, tok, id) {
 		return
 	}
+	source := tok.Name
 
 	switch r.Method {
 	case http.MethodGet:
@@ -75,7 +69,7 @@ func (s *Server) handleSecretID(w http.ResponseWriter, r *http.Request) {
 	}
 }
 
-// allowed checks that a project token may do method on key, and answers 403
+// allowed checks that a token may do method on key, and answers 403
 // if not. The check doesn't depend on whether key exists, so a project can't
 // use it to find out which secrets other projects have.
 func (s *Server) allowed(w http.ResponseWriter, method string, tok tokens.Token, key string) bool {
@@ -117,13 +111,13 @@ func (s *Server) getAllSecrets(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// A project token only sees the keys it can read.
-	project := callerFrom(r.Context()).project
+	// A token only sees the keys it can read.
+	tok := callerFrom(r.Context())
 
 	// Always an array, even when empty: clients shouldn't have to handle null.
 	pubList := SecretSummaryList{Secrets: []SecretSummary{}}
 	for _, secret := range secrets {
-		if project != nil && !project.CanRead(secret.Key) {
+		if !tok.CanRead(secret.Key) {
 			continue
 		}
 		pubList.Secrets = append(pubList.Secrets, SecretSummary{

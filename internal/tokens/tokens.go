@@ -1,6 +1,6 @@
 // Package tokens manages per-project API tokens. Each project gets its own
-// bearer token, limited to the secrets its patterns cover, instead of sharing
-// the master token (COVE_CLIENT_SECRET), which can reach everything.
+// bearer token, limited to the secrets its patterns cover. There is no token
+// that isn't one of these.
 //
 // A pattern is an exact key ("shared.tmdb-api-key") or a prefix ending in "*"
 // ("lighthouse.*"; "*" alone matches every key). Read patterns let a token read
@@ -31,7 +31,7 @@ var (
 )
 
 // Prefix starts every project token, so one is easy to recognize (e.g. by a
-// secret scanner) and to tell apart from the master token.
+// secret scanner).
 const Prefix = "cove_"
 
 // randomLength is the number of random characters after Prefix: 43 characters

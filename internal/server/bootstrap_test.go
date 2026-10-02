@@ -17,7 +17,7 @@ func TestBootstrapRefusesAddressesOutsideTheAllowedNetworks(t *testing.T) {
 
 	db := &fakePinger{}
 	mux := http.NewServeMux()
-	New(nil, gate, db, Options{ClientSecret: testToken, Port: "0"}).defineRoutes(mux)
+	New(nil, gate, db, Options{Tokens: fullAccess{}, Port: "0"}).defineRoutes(mux)
 	api := &testAPI{t: t, handler: mux, gate: gate}
 
 	code, env := api.do("GET", "/v0/bootstrap/lighthouse", "")

@@ -28,7 +28,7 @@ func (p *fakePinger) RecordBootstrap(ctx context.Context, remoteAddr string, out
 func TestReadyReflectsDatabase(t *testing.T) {
 	db := &fakePinger{}
 	mux := http.NewServeMux()
-	New(nil, bootstrap.NewGate(t.TempDir(), nil), db, Options{ClientSecret: testToken, Port: "0"}).defineRoutes(mux)
+	New(nil, bootstrap.NewGate(t.TempDir(), nil), db, Options{Tokens: fullAccess{}, Port: "0"}).defineRoutes(mux)
 	api := &testAPI{t: t, handler: mux}
 
 	code, env := api.do("GET", "/v0/ready", "")

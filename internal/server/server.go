@@ -21,36 +21,33 @@ type DB interface {
 
 // Options are the Server's settings.
 type Options struct {
-	ClientSecret string // the master token, with access to every secret
-	Port         string
-	Version      string // reported by /v0/version
+	Port    string
+	Version string // reported by /v0/version
 
-	// Tokens checks per-project tokens. If nil, only the master token works.
+	// Tokens checks the project token every request must carry. Required.
 	Tokens TokenAuthenticator
 }
 
 type Server struct {
-	vault        *vault.Vault
-	bootstrap    *bootstrap.Gate
-	db           DB
-	clientSecret string
-	tokens       TokenAuthenticator
-	limiter      *failureLimiter
-	port         string
-	version      string
+	vault     *vault.Vault
+	bootstrap *bootstrap.Gate
+	db        DB
+	tokens    TokenAuthenticator
+	limiter   *failureLimiter
+	port      string
+	version   string
 }
 
 // New returns a Server.
 func New(v *vault.Vault, gate *bootstrap.Gate, db DB, opts Options) *Server {
 	return &Server{
-		vault:        v,
-		bootstrap:    gate,
-		db:           db,
-		clientSecret: opts.ClientSecret,
-		tokens:       opts.Tokens,
-		limiter:      newFailureLimiter(),
-		port:         opts.Port,
-		version:      opts.Version,
+		vault:     v,
+		bootstrap: gate,
+		db:        db,
+		tokens:    opts.Tokens,
+		limiter:   newFailureLimiter(),
+		port:      opts.Port,
+		version:   opts.Version,
 	}
 }
 
