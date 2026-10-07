@@ -2,6 +2,19 @@
 
 All notable changes to Cove. Versions follow [semantic versioning](https://semver.org); the HTTP API is `/v0` and stays backwards compatible.
 
+## v1.0.1
+
+A deployment-only release: no code, API, database or setting changes. Cove is now deployed by Lighthouse v1.0.0 as infrastructure, from release tags only.
+
+### Changed
+
+- **`docker-compose.yml` declares Cove's Lighthouse settings:** `x-lighthouse: {deploy: releases, tier: infra}`. Lighthouse deploys Cove only when a version is tagged (pushing to `main` deploys nothing), after sparkdb and before the apps, with nothing else deploying until Cove is healthy again. It fetches the previous version's secrets before the swap, so a rollback never needs Cove itself.
+
+### Upgrading from v1.0.0
+
+- Nothing to do: the image, the `.env`, the database and every client are unchanged.
+- `status` and `version` still report `v1.0.0`: `COVE_VERSION` in the compose file wasn't bumped for this release.
+
 ## v1.0.0
 
 The first stable release: a rework of v0.2.0 for security, reliability and day-to-day use. The `/v0` routes and responses are unchanged, but **every client now needs its own token, and deploying it needs the upgrade steps below**. Use CoveClient v1.0.0.

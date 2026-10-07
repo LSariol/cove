@@ -10,17 +10,12 @@ services:
       context: .
       dockerfile: Dockerfile
     environment:
-      - COVE_VERSION=v1.0.0   # shown by `status` and in the log; bump it with each release
+      - COVE_VERSION=v1.0.2   # shown by `status` and in the log; bump it with each release
       - APP_ENV=PROD
       - APP_PORT=2100
       - APP_ENV_PATH=/app/vault/.env
       - APP_MARKER_PATH=/app/vault/markers
     container_name: cove
-    # No published port: only containers on the spark network can reach Cove,
-    # at http://cove:2100. Nothing on the LAN can connect. The CLI doesn't
-    # need a port either (docker exec). If something on the server itself,
-    # outside Docker, ever needs Cove, publish it to this machine only:
-    #   ports: ["127.0.0.1:2100:2100"]
     volumes:
       - type: bind
         source: /srv/server/storage/cove/.env
@@ -30,12 +25,7 @@ services:
         source: /srv/server/storage/cove/markers
         target: /app/vault/markers
         read_only: false
-    # The image runs `cove serve` (API only). For the CLI use
-    #   docker exec -it cove /cove shell     (or one command: docker exec cove /cove list)
-    # No TTY is attached, so nothing typed into the CLI ends up in docker logs.
     restart: unless-stopped
-    # Take away what Cove never needs. It writes only to the markers mount;
-    # the rest of the container's filesystem is read-only.
     read_only: true
     tmpfs:
       - /tmp
