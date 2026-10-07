@@ -4,7 +4,6 @@ x-lighthouse:
   deploy: releases
   tier: infra
 
-
 services:
   cove:
     build:
