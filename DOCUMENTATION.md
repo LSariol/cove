@@ -670,7 +670,7 @@ go vet ./... && go test ./...
 
 1. Work lands on a branch, then `release/<version>`, and prod is updated only from `main`.
 2. Update `CHANGELOG.md` and set `COVE_VERSION` in `docker-compose.yml` to the new version; merge to `main`; tag `vX.Y.Z` in Cove (and CoveClient if it changed); push the tags.
-3. Pushing `main` deploys it (Lighthouse), or on the server: `git pull && docker compose up -d --build`.
+3. Lighthouse deploys Cove when a version is tagged (`x-lighthouse: deploy: releases` in `docker-compose.yml`); pushing `main` alone deploys nothing. By hand, on the server: `git pull && docker compose up -d --build`.
 
 Versions follow [semantic versioning](https://semver.org). The HTTP API stays `/v0` as long as it's backwards compatible.
 
