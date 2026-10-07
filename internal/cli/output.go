@@ -43,7 +43,6 @@ func colorize(color string, s string) string {
 	return color + s + reset
 }
 
-// out writes data to stdout, followed by a newline.
 func out(s string) {
 	fmt.Fprintln(stdout, s)
 }
@@ -58,7 +57,6 @@ func warn(msg string) {
 	fmt.Fprintln(stderr, colorize(yellow, "! "+msg))
 }
 
-// fail reports an error.
 func fail(msg string) {
 	fmt.Fprintln(stderr, colorize(red, "✗ "+msg))
 }

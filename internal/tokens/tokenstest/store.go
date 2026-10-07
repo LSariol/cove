@@ -26,7 +26,6 @@ type Store struct {
 	byName map[string]entry
 	nextID int64
 
-	// Events holds every logged event, in order.
 	Events []tokens.Event
 }
 

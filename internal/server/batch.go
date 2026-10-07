@@ -11,7 +11,6 @@ import (
 	"github.com/LSariol/Cove/internal/vault"
 )
 
-// maxBatchKeys is the most keys one batch request may ask for.
 const maxBatchKeys = 100
 
 // BatchRequest is the body of POST /v0/batch.

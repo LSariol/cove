@@ -35,7 +35,6 @@ type Store interface {
 	LogTokenEvent(ctx context.Context, e Event) error
 	ListTokenEvents(ctx context.Context, name string, limit int) ([]Event, error)
 
-	// WithinTokenTx runs fn in a transaction, like database.Store.WithinTx.
 	WithinTokenTx(ctx context.Context, fn func(tx Store) error) error
 }
 
@@ -186,7 +185,6 @@ func (m *Manager) RenameKey(ctx context.Context, oldKey string, newKey string, s
 	return names, err
 }
 
-// Get returns the named token.
 func (m *Manager) Get(ctx context.Context, name string) (Token, error) {
 	return m.store.TokenByName(ctx, name)
 }
@@ -207,7 +205,6 @@ func (m *Manager) Listing(ctx context.Context, key string) ([]string, error) {
 	return m.namesWhere(ctx, func(t Token) bool { return t.Lists(key) })
 }
 
-// Readers returns the names of the tokens that can read key.
 func (m *Manager) Readers(ctx context.Context, key string) ([]string, error) {
 	return m.namesWhere(ctx, func(t Token) bool { return t.CanRead(key) })
 }

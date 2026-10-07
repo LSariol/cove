@@ -10,10 +10,7 @@ import (
 )
 
 var (
-	// ErrNotFound is returned when no secret has the requested key.
-	ErrNotFound = errors.New("secret not found")
-
-	// ErrAlreadyExists is returned when creating a secret whose key is taken.
+	ErrNotFound      = errors.New("secret not found")
 	ErrAlreadyExists = errors.New("a secret with this key already exists")
 )
 
@@ -38,7 +35,6 @@ func classify(err error) error {
 // secretColumns is the column list scanned by scanSecret, in order.
 const secretColumns = `id, key, encrypted_value, version, read_count, created_at, updated_at`
 
-// InsertSecret stores a new secret and returns the created row.
 func (d *Database) InsertSecret(ctx context.Context, key string, encryptedValue string) (Secret, error) {
 	const query = `
 	INSERT INTO cove.secrets (key, encrypted_value)
@@ -152,7 +148,6 @@ func (d *Database) UpdateSecretValue(ctx context.Context, key string, encryptedV
 	return s, nil
 }
 
-// DeleteSecret deletes a secret and returns the deleted row.
 func (d *Database) DeleteSecret(ctx context.Context, key string) (Secret, error) {
 	const query = `
 	DELETE FROM cove.secrets
@@ -182,7 +177,6 @@ func (d *Database) LogEvent(ctx context.Context, logInfo EventLogInput) error {
 	return nil
 }
 
-// RenameSecret changes a secret's key and returns the renamed row.
 func (d *Database) RenameSecret(ctx context.Context, oldKey string, newKey string) (Secret, error) {
 	const query = `
 	UPDATE cove.secrets
@@ -295,7 +289,6 @@ func (d *Database) ValueVersions(ctx context.Context, key string) (map[int]strin
 	return versions, nil
 }
 
-// RecordBootstrap logs a request to the bootstrap endpoint.
 func (d *Database) RecordBootstrap(ctx context.Context, remoteAddr string, outcome string) error {
 	const query = `INSERT INTO cove.bootstrap_log (remote_addr, outcome) VALUES ($1, $2)`
 
@@ -341,7 +334,6 @@ func (d *Database) PruneReadEvents(ctx context.Context, days int) (int64, error)
 	return removed, nil
 }
 
-// CountSecrets returns how many secrets the vault holds.
 func (d *Database) CountSecrets(ctx context.Context) (int, error) {
 	var n int
 	if err := d.conn().QueryRow(ctx, `SELECT count(*) FROM cove.secrets`).Scan(&n); err != nil {

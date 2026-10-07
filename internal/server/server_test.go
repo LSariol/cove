@@ -73,7 +73,6 @@ func (a *testAPI) do(method string, path string, body string, headers ...string)
 	return rec.Code, env
 }
 
-// secret sends a request with testToken.
 func (a *testAPI) secret(method string, key string, body string) (int, envelope) {
 	a.t.Helper()
 	return a.do(method, "/v0/secrets/"+key, body, "Authorization", "Bearer "+testToken)

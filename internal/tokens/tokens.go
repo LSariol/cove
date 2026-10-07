@@ -23,11 +23,8 @@ import (
 )
 
 var (
-	// ErrNotFound is returned when no token has the given name or value.
 	ErrNotFound = errors.New("token not found")
-
-	// ErrExists is returned when creating a token whose name is taken.
-	ErrExists = errors.New("a token with this name already exists")
+	ErrExists   = errors.New("a token with this name already exists")
 )
 
 // Prefix starts every project token, so one is easy to recognize (e.g. by a
@@ -51,7 +48,6 @@ type Token struct {
 	LastUsedAt *time.Time // nil if never used
 }
 
-// CanRead reports whether the token may read key.
 func (t Token) CanRead(key string) bool {
 	return matchesAny(t.Read, key) || matchesAny(t.Write, key)
 }
@@ -76,7 +72,6 @@ type Event struct {
 	OccurredAt time.Time
 }
 
-// Matches reports whether pattern covers key.
 func Matches(pattern string, key string) bool {
 	if prefix, ok := strings.CutSuffix(pattern, "*"); ok {
 		return strings.HasPrefix(key, prefix)
@@ -138,7 +133,6 @@ func isKeyChar(c rune) bool {
 		c == '-' || c == '_' || c == '.'
 }
 
-// Generate returns a new random token and its hash.
 func Generate() (token string, hash []byte, err error) {
 	b := make([]byte, randomLength)
 	max := big.NewInt(int64(len(alphabet)))

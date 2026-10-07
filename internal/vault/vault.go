@@ -18,18 +18,13 @@ import (
 )
 
 var (
-	// ErrNotFound is returned when no secret has the requested key.
-	ErrNotFound = database.ErrNotFound
-
-	// ErrAlreadyExists is returned by Create when the key is already taken.
+	ErrNotFound      = database.ErrNotFound
 	ErrAlreadyExists = database.ErrAlreadyExists
 
 	// ErrDecrypt is returned by Get when a stored value can't be decrypted,
 	// usually because VAULT_ENCRYPTION_KEY changed after it was stored.
 	ErrDecrypt = errors.New("the stored value couldn't be decrypted")
 
-	// ErrVersionNotFound is returned by Restore when the requested version
-	// isn't in the secret's history.
 	ErrVersionNotFound = errors.New("that version isn't in the secret's history")
 
 	// ErrNothingToRestore is returned by Restore when there's no earlier
@@ -37,16 +32,14 @@ var (
 	ErrNothingToRestore = errors.New("there's no earlier value to restore")
 
 	// ErrWrongKey means the vault is encrypted with a different key than
-	// VAULT_ENCRYPTION_KEY: the wrong key is configured, or the key was
-	// rotated (cove rotate-key) while this Cove was running. Nothing is
-	// written with the wrong key.
+	// VAULT_ENCRYPTION_KEY: the wrong key is configured, or `cove rotate-key`
+	// ran while this Cove was running.
 	ErrWrongKey = errors.New("the vault is encrypted with a different key than VAULT_ENCRYPTION_KEY; if it was just rotated, restart Cove with the new key")
 )
 
 // Store is the persistence a Vault needs. *database.Database implements it.
 type Store = database.Store
 
-// Event is one entry in a secret's history.
 type Event = database.Event
 
 // Info is a secret's details, without its value.
@@ -145,7 +138,6 @@ func (v *Vault) read(ctx context.Context, key string, source string, countRead b
 		secret = fromRow(s)
 		secret.Value = value
 
-		// Reads record who read which version, not the value itself.
 		return logEvent(ctx, tx, database.EventLogInput{
 			SecretID:      s.ID,
 			SecretKey:     s.Key,
@@ -507,7 +499,6 @@ func (v *Vault) EnsureKey(ctx context.Context) error {
 		return nil
 	}
 
-	// Nothing recorded yet: make sure this key really opens the vault.
 	rows, err := v.store.ListSecrets(ctx)
 	if err != nil {
 		return err
@@ -554,7 +545,6 @@ func (v *Vault) checkKey(ctx context.Context, tx Store) error {
 // a damaged value.
 func (v *Vault) decryptError(ctx context.Context, tx Store, key string, cause error) error {
 	if err := v.checkKey(ctx, tx); errors.Is(err, ErrWrongKey) {
-		// Still a decrypt failure, just with a known cause.
 		return fmt.Errorf("decrypt %q: %w (%w)", key, ErrWrongKey, ErrDecrypt)
 	}
 	return fmt.Errorf("get secret %q: %w (%v)", key, ErrDecrypt, cause)

@@ -19,7 +19,6 @@ import (
 // source is recorded in the event log for everything done through the CLI.
 const source = "cove_cli"
 
-// Options are the CLI's settings.
 type Options struct {
 	// Embedded is true when the CLI runs inside the server process (plain
 	// `cove`). Then `exit` stops the API server too; otherwise it only leaves

@@ -287,8 +287,6 @@ func (c *CLI) printSecrets(ctx context.Context, term string, mode string) error 
 	return nil
 }
 
-// printSecretTable writes secrets as aligned columns to stdout. The key column
-// is as wide as the longest key.
 func printSecretTable(secrets []vault.Secret) {
 	w := tabwriter.NewWriter(stdout, 0, 0, 2, ' ', 0)
 	fmt.Fprintln(w, "KEY\tVERSION\tREADS\tCREATED\tUPDATED")

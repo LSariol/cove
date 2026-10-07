@@ -74,7 +74,6 @@ func (c *CLI) bootstrapCmd(ctx context.Context, args []string) error {
 	}
 }
 
-// recentBootstrapCount is how many attempts `bootstrap status` shows.
 const recentBootstrapCount = 5
 
 func (c *CLI) bootstrapStatus(ctx context.Context) error {

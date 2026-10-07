@@ -15,7 +15,6 @@ import (
 const tokenForm = "token [list | create <name> [--allow <pattern>]... [--write <pattern>]... | show <name> |\n" +
 	"       allow <pattern> <name>... [--write] | deny <pattern> <name>... | rotate <name> [--yes] | revoke <name> [--yes]]"
 
-// tokenCmd manages per-project tokens.
 func (c *CLI) tokenCmd(ctx context.Context, args []string) error {
 	if c.tokens == nil {
 		return errors.New("Token commands need the database, which isn't connected.")
@@ -334,12 +333,10 @@ func (c *CLI) warnUnmatched(tok tokens.Token, keys []string) {
 	}
 }
 
-// tokenCompletions are the `token` subcommands, for Tab completion.
 func tokenCompletions(*CLI) []string {
 	return []string{"allow", "create", "deny", "list", "revoke", "rotate", "show"}
 }
 
-// tokenError turns an error from the token manager into a message.
 func tokenError(name string, err error) error {
 	if errors.Is(err, tokens.ErrNotFound) {
 		return fmt.Errorf("No token named %s. See them with \"token list\".", missingName(err, name))

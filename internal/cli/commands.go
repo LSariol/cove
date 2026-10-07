@@ -37,13 +37,11 @@ type usage struct {
 	help string
 }
 
-// flag is an option a command takes, e.g. "--yes".
 type flag struct {
 	name string
 	help string
 }
 
-// example is a command line and a short note on what it does.
 type example struct {
 	line string
 	note string

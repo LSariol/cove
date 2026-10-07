@@ -20,7 +20,6 @@ type Store struct {
 	secrets map[string]database.Secret
 	nextID  int
 
-	// Events holds every logged event, in order.
 	Events []database.EventLogInput
 	times  []time.Time
 

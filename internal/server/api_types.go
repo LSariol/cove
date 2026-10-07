@@ -40,6 +40,6 @@ type GetSecretResponse struct {
 // SecretActionResponse is returned by create, update, and delete operations.
 type SecretActionResponse struct {
 	Key     string `json:"key"`
-	Action  string `json:"action"`  // "created" | "updated" | "deleted"
-	Message string `json:"message"` // human-readable confirmation
+	Action  string `json:"action"` // "created" | "updated" | "deleted"
+	Message string `json:"message"`
 }

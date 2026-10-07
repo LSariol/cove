@@ -94,7 +94,6 @@ func (c *CLI) complete(line string, pos int, key rune) (string, int, bool) {
 	if len(matches) == 1 {
 		completed += " "
 	} else if completed == word {
-		// Nothing more to complete: show the options instead.
 		if c.term != nil {
 			c.term.Write([]byte(strings.Join(matches, "  ") + "\n"))
 		}
@@ -104,7 +103,6 @@ func (c *CLI) complete(line string, pos int, key rune) (string, int, bool) {
 	return head[:start] + completed + tail, start + len(completed), true
 }
 
-// commandNames returns every command's primary name, sorted.
 func (c *CLI) commandNames() []string {
 	names := make([]string, 0, len(c.commands))
 	for _, cmd := range c.commands {
@@ -114,7 +112,6 @@ func (c *CLI) commandNames() []string {
 	return names
 }
 
-// keyNames returns every secret's key, for completion.
 func (c *CLI) keyNames() []string {
 	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
 	defer cancel()

@@ -21,7 +21,6 @@ import (
 )
 
 const (
-	// DefaultWindow is how long `bootstrap open` keeps the endpoint open.
 	DefaultWindow = 10 * time.Minute
 
 	// GracePeriod is how long after a handout the same address can fetch the
@@ -31,7 +30,6 @@ const (
 	stateFile = "bootstrap.json"
 )
 
-// Outcome is the result of a request to the bootstrap endpoint.
 type Outcome string
 
 const (
@@ -60,7 +58,6 @@ type Handout struct {
 	Token     string
 }
 
-// state is what's saved in the state file.
 type state struct {
 	OpenUntil     time.Time `json:"open_until,omitzero"`
 	LastHandoutAt time.Time `json:"last_handout_at,omitzero"`
@@ -73,8 +70,8 @@ type state struct {
 	Token     string `json:"token,omitzero"`
 }
 
-// Gate decides whether a bootstrap request may receive the client token. Its
-// state lives in a file, so the CLI (a separate process) can open and lock it.
+// Gate decides whether a bootstrap request may receive a token. Its state
+// lives in a file, so the CLI (a separate process) can open and lock it.
 type Gate struct {
 	dir     string
 	allowed []netip.Prefix

@@ -51,7 +51,6 @@ func (c *CLI) info(ctx context.Context, args []string) error {
 	return w.Flush()
 }
 
-// describeReaders lists the project tokens that can read a secret.
 func describeReaders(names []string) string {
 	if len(names) == 0 {
 		return "no project tokens"

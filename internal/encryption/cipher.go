@@ -31,36 +31,32 @@ func (c *Cipher) Fingerprint() string {
 	return hex.EncodeToString(sum[:16])
 }
 
+// Encrypt returns base64(nonce || ciphertext). Every call uses a fresh random
+// nonce, so the same value never encrypts to the same result twice.
 func (c *Cipher) Encrypt(data string) (string, error) {
-
-	// Generate AES cipher block from the encryption key
 	block, err := aes.NewCipher(c.key[:])
 	if err != nil {
 		return "", fmt.Errorf("new block: %w", err)
 	}
 
-	//create a GCM cipher mode
 	gcm, err := cipher.NewGCM(block)
 	if err != nil {
 		return "", fmt.Errorf("new gcm: %w", err)
 	}
 
-	// Generate a random nonce (number used once) for GCM
 	nonce := make([]byte, gcm.NonceSize())
 	if _, err := rand.Read(nonce); err != nil {
 		return "", fmt.Errorf("make nonce: %w", err)
 	}
 
-	//Encrypt the data
 	cipherText := gcm.Seal(nonce, nonce, []byte(data), nil)
-
 	return base64.URLEncoding.EncodeToString(cipherText), nil
-
 }
 
+// Decrypt reverses Encrypt. GCM authenticates the value, so one encrypted
+// with a different key, or changed in any way, fails instead of decrypting to
+// garbage.
 func (c *Cipher) Decrypt(data string) (string, error) {
-
-	//Decode the cipher from base64
 	cipherText, err := base64.URLEncoding.DecodeString(data)
 	if err != nil {
 		return "", fmt.Errorf("decode ciphertext: %w", err)
@@ -71,24 +67,19 @@ func (c *Cipher) Decrypt(data string) (string, error) {
 		return "", err
 	}
 
-	// Create a GCM cipher mode
 	gcm, err := cipher.NewGCM(block)
 	if err != nil {
 		return "", err
 	}
 
-	// Extract nonce and cipher text
 	if len(cipherText) < gcm.NonceSize() {
 		return "", errors.New("ciphertext is too short")
 	}
 	nonce, cipherText := cipherText[:gcm.NonceSize()], cipherText[gcm.NonceSize():]
 
-	// decrypt the data
 	plaintext, err := gcm.Open(nil, nonce, cipherText, nil)
 	if err != nil {
 		return "", err
 	}
-
 	return string(plaintext), nil
-
 }

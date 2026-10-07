@@ -15,8 +15,7 @@ import (
 	"github.com/joho/godotenv"
 )
 
-// Config holds every setting Cove reads from the environment. It is read once
-// at startup and passed to the packages that need it.
+// Config holds every setting Cove reads from the environment.
 type Config struct {
 	DatabaseURL        string // COVE_DATABASE_URL: runtime role (cove_app)
 	MigrateDatabaseURL string // COVE_MIGRATE_DATABASE_URL: migrator role; empty disables migrations

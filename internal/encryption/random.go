@@ -9,18 +9,16 @@ const charset = "abcdefghijklmnopqrstuvwxyz" +
 	"ABCDEFGHIJKLMNOPQRSTUVWXYZ" +
 	"0123456789"
 
-// GenerateSecret returns a cryptographically secure random string
-// of the given length, using characters from the predefined charset.
-// It is suitable for generating API keys, client secrets, or encryption keys.
+// GenerateSecret returns length random letters and digits from crypto/rand,
+// for vault keys and `cove generate`.
 func GenerateSecret(length int) (string, error) {
-	clientSecret := make([]byte, length)
-	for i := range clientSecret {
+	secret := make([]byte, length)
+	for i := range secret {
 		n, err := rand.Int(rand.Reader, big.NewInt(int64(len(charset))))
 		if err != nil {
 			return "", err
 		}
-		clientSecret[i] = charset[n.Int64()]
+		secret[i] = charset[n.Int64()]
 	}
-
-	return string(clientSecret), nil
+	return string(secret), nil
 }

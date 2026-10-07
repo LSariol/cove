@@ -88,7 +88,6 @@ func runServer(withShell bool) {
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer stop()
 
-	// Migrations only run when the migrator connection is configured.
 	if cfg.MigrateDatabaseURL != "" {
 		if err := database.Migrate(ctx, cfg.MigrateDatabaseURL); err != nil {
 			fatal(err)
@@ -98,8 +97,6 @@ func runServer(withShell bool) {
 	db := connect(ctx, cfg)
 	v := vault.New(db, encryption.NewCipher(cfg.EncryptionKey))
 
-	// Refuse to start with a key other than the vault's (and record it the
-	// first time).
 	if err := v.EnsureKey(ctx); err != nil {
 		err = keyError(cfg, db, err)
 		db.Close()

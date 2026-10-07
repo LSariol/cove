@@ -44,7 +44,6 @@ func (d *Database) RecordVaultKey(ctx context.Context, fingerprint string) error
 	return nil
 }
 
-// RotationResult says what RotateKey re-encrypted.
 type RotationResult struct {
 	Secrets     int // values in cove.secrets
 	EventValues int // value copies in cove.event_log

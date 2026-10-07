@@ -56,7 +56,6 @@ func (d *Database) Ping(ctx context.Context) error {
 	return d.Pool.Ping(ctx)
 }
 
-// Close closes a pgxpool connection.
 func (d *Database) Close() {
 	if d.Pool != nil {
 		d.Pool.Close()

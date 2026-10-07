@@ -19,7 +19,6 @@ type DB interface {
 	RecordBootstrap(ctx context.Context, remoteAddr string, outcome string) error
 }
 
-// Options are the Server's settings.
 type Options struct {
 	Port    string
 	Version string // reported by /v0/version
@@ -38,7 +37,6 @@ type Server struct {
 	version   string
 }
 
-// New returns a Server.
 func New(v *vault.Vault, gate *bootstrap.Gate, db DB, opts Options) *Server {
 	return &Server{
 		vault:     v,
@@ -77,14 +75,11 @@ func (s *Server) Run(ctx context.Context) error {
 	return nil
 }
 
-// shutdownTimeout is how long requests in progress get to finish when Cove stops.
 const shutdownTimeout = 5 * time.Second
 
 // httpServer builds the http.Server with timeouts, so a slow or stalled client
 // can't hold a connection open forever. Real requests take milliseconds.
 func (s *Server) httpServer() *http.Server {
-
-	//multiplexer (router)
 	mux := http.NewServeMux()
 	s.defineRoutes(mux)
 

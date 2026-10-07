@@ -33,7 +33,6 @@ func TestHelpOverview(t *testing.T) {
 		}
 	}
 
-	// Every command is listed.
 	for _, cmd := range c.commands {
 		if !strings.Contains(o, "  "+cmd.names[0]) {
 			t.Errorf("overview doesn't list %q", cmd.names[0])
@@ -69,7 +68,6 @@ func TestHelpForOneCommand(t *testing.T) {
 		}
 	}
 
-	// Aliases work too.
 	if o2, _ := helpOutput(t, c, "t"); o2 != o {
 		t.Error(`"help t" differs from "help token"`)
 	}
